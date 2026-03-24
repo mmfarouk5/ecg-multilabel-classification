@@ -1,0 +1,95 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+*.egg
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+ENV/
+
+# IDE / Editor settings
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Data files (large datasets)
+data/
+*.csv
+*.h5
+*.hdf5
+*.wfdb
+*.dat
+*.hea
+*.atr
+*.zip
+
+# Model artifacts
+*.pkl
+*.joblib
+*.pt
+*.pth
+*.onnx
+saved_models/
+checkpoints/
+weights/
+
+# Logs and outputs
+logs/
+*.log
+runs/
+
+# Environment variables
+.env
+.env.*
+
+# pytest / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# mypy
+.mypy_cache/
+
+# Distribution
+*.tar.gz
+
+# Other files
+Project_Proposal.pdf
