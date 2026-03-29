@@ -50,7 +50,7 @@ ENV/
 ._*
 
 # Data files (large datasets)
-data/
+/data
 *.csv
 *.h5
 *.hdf5
@@ -92,4 +92,4 @@ htmlcov/
 *.tar.gz
 
 # Other files
-Project_Proposal.pdf
+draft/
