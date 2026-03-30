@@ -1,12 +1,12 @@
 # ============================================================
-# ECG Multi-Label Classification — Default Configuration
+# ECG Classification — CNN 1D Configuration
 # ============================================================
 
 data:
   raw_dir: "data/raw/ptb-xl-a-large-publicly-available-electrocardiography-dataset-1.0.1"
   processed_dir: "data/processed"
-  sampling_rate: 100            # 100 or 500
-  label_type: "diagnostic_superclass"  # diagnostic_superclass | diagnostic_subclass | all
+  sampling_rate: 100
+  label_type: "diagnostic_superclass"
 
 preprocessing:
   bandpass:
@@ -17,35 +17,39 @@ preprocessing:
     cutoff: 0.5
     order: 4
   outlier_clip_percentile: 99
-  normalize: true               # Z-score normalization per lead
+  normalize: true
 
 split:
-  val_fold: 9                   # PTB-XL strat_fold used for validation
-  test_fold: 10                 # PTB-XL strat_fold used for test
+  val_fold: 9
+  test_fold: 10
   n_kfolds: 5
   seed: 42
 
 model:
-  name: "cnn_1d"                # cnn_1d | leadwise_cnn | resnet | lstm | transformer | cnn_lstm | cnn_transformer
+  name: "cnn_1d"
   input_channels: 12
-  num_classes: 5                # 5 diagnostic superclasses
-  params: {}
+  num_classes: 5
+  params:
+    base_filters: 64
+    n_blocks: 4
+    kernel_size: 7
+    dropout: 0.3
 
 training:
   epochs: 50
   batch_size: 128
   learning_rate: 0.001
   weight_decay: 0.0001
-  loss: "weighted_bce"          # weighted_bce | focal
-  optimizer: "adamw"              # adam | adamw | sgd
-  scheduler: "cosine"           # cosine | step | plateau
+  loss: "weighted_bce"
+  optimizer: "adamw"
+  scheduler: "cosine"
   scheduler_params:
     T_max: 50
     eta_min: 0.00001
   focal_loss_params:
     alpha: 1.0
     gamma: 2.0
-  amp: true                     # automatic mixed precision
+  amp: true
   gradient_clip: 1.0
   num_workers: 4
   pin_memory: true
@@ -66,7 +70,7 @@ output:
   results_dir: "outputs/results"
 
 experiment:
-  name: "default"
+  name: "cnn_1d"
   seed: 42
   use_tensorboard: true
   use_wandb: false
