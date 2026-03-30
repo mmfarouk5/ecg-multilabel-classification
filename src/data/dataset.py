@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import torch
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader, Dataset, WeightedRandomSampler
 
 logger = logging.getLogger(__name__)
 
@@ -35,8 +35,19 @@ class ECGDataset(Dataset):
         labels: np.ndarray,
         transform: Optional[Any] = None,
     ):
-        self.signals = signals
-        self.labels = labels
+        # Convert once up front to avoid per-item tensor allocations in __getitem__.
+        signals = np.asarray(signals, dtype=np.float32)
+        if signals.ndim != 3:
+            raise ValueError(
+                f"Expected signals shape (N, seq_len, n_leads), got {signals.shape}")
+        self.signals = torch.from_numpy(
+            np.ascontiguousarray(np.transpose(signals, (0, 2, 1))))
+
+        labels = np.asarray(labels, dtype=np.float32)
+        if labels.ndim != 2:
+            raise ValueError(
+                f"Expected labels shape (N, num_classes), got {labels.shape}")
+        self.labels = torch.from_numpy(np.ascontiguousarray(labels))
         self.transform = transform
 
     def __len__(self) -> int:
@@ -51,14 +62,36 @@ class ECGDataset(Dataset):
             - signal tensor of shape ``(n_leads, seq_len)`` (channels first).
             - label tensor of shape ``(num_classes,)``.
         """
-        # Shape: (seq_len, n_leads) → (n_leads, seq_len) for Conv1d
-        signal = torch.tensor(self.signals[idx], dtype=torch.float32).permute(1, 0)
-        label = torch.tensor(self.labels[idx], dtype=torch.float32)
+        signal = self.signals[idx]
+        label = self.labels[idx]
 
         if self.transform is not None:
             signal = self.transform(signal)
 
         return signal, label
+
+
+def _build_class_aware_sampler(labels: np.ndarray) -> WeightedRandomSampler:
+    """
+    Build a weighted sampler that upweights samples containing rare labels.
+
+    For each sample, weight is the sum of inverse class prevalence for
+    all positive labels. Samples with no positives get a default weight of 1.
+    """
+    labels = np.asarray(labels, dtype=np.float32)
+    prevalence = labels.mean(axis=0)
+    inv_prev = 1.0 / (prevalence + 1e-6)
+
+    sample_weights = (labels * inv_prev).sum(axis=1)
+    sample_weights = np.where(sample_weights > 0.0, sample_weights, 1.0)
+    sample_weights = sample_weights / sample_weights.mean()
+
+    weights_t = torch.from_numpy(sample_weights.astype(np.float64))
+    return WeightedRandomSampler(
+        weights=weights_t,
+        num_samples=len(sample_weights),
+        replacement=True,
+    )
 
 
 def _load_from_cache(
@@ -132,11 +165,13 @@ def get_dataloaders(
     # ── Try cached data first ────────────────────────────────
     if max_samples is None and _is_cache_valid(processed_dir):
         logger.info("Using cached preprocessed data from %s", processed_dir)
-        signals, label_matrix, label_classes, class_weights, splits = _load_from_cache(processed_dir)
+        signals, label_matrix, label_classes, class_weights, splits = _load_from_cache(
+            processed_dir)
     else:
         # ── Fallback: process from scratch ───────────────────
         if max_samples is not None:
-            logger.info("max_samples=%d specified, processing from scratch", max_samples)
+            logger.info(
+                "max_samples=%d specified, processing from scratch", max_samples)
         else:
             logger.info(
                 "No cached data found at %s. Run 'python scripts/preprocess_data.py' "
@@ -161,8 +196,10 @@ def get_dataloaders(
             metadata = metadata.iloc[:max_samples]
 
         scp_df = load_scp_statements(data_cfg["raw_dir"])
-        diag_labels = aggregate_diagnostics(metadata, scp_df, data_cfg["label_type"])
-        label_matrix, label_classes = encode_labels(diag_labels, label_type=data_cfg["label_type"])
+        diag_labels = aggregate_diagnostics(
+            metadata, scp_df, data_cfg["label_type"])
+        label_matrix, label_classes = encode_labels(
+            diag_labels, label_type=data_cfg["label_type"])
 
         signals = preprocess_pipeline(signals, config)
 
@@ -174,20 +211,43 @@ def get_dataloaders(
 
     # pin_memory only works on CUDA, not MPS
     from src.utils import get_device
-    use_pin_memory = train_cfg.get("pin_memory", False) and get_device().type == "cuda"
+    use_pin_memory = train_cfg.get(
+        "pin_memory", False) and get_device().type == "cuda"
+    num_workers = train_cfg.get("num_workers", 0)
+    use_persistent_workers = train_cfg.get(
+        "persistent_workers", True) and num_workers > 0
+    prefetch_factor = train_cfg.get("prefetch_factor", 2)
+
+    sampler_cfg = train_cfg.get("class_aware_sampling", {})
+    class_aware_sampling = isinstance(
+        sampler_cfg, dict) and sampler_cfg.get("enabled", False)
 
     # ── Build DataLoaders ────────────────────────────────────
     dataloaders = {}
     for split_name in ["train", "val", "test"]:
         idx = splits[split_name]
         dataset = ECGDataset(signals[idx], label_matrix[idx])
+        sampler = None
+        shuffle = split_name == "train"
+        if split_name == "train" and class_aware_sampling:
+            sampler = _build_class_aware_sampler(label_matrix[idx])
+            shuffle = False
+
+        loader_kwargs = {
+            "dataset": dataset,
+            "batch_size": train_cfg["batch_size"],
+            "shuffle": shuffle,
+            "num_workers": num_workers,
+            "pin_memory": use_pin_memory,
+            "drop_last": split_name == "train",
+            "sampler": sampler,
+            "persistent_workers": use_persistent_workers,
+        }
+        if num_workers > 0:
+            loader_kwargs["prefetch_factor"] = prefetch_factor
+
         dataloaders[split_name] = DataLoader(
-            dataset,
-            batch_size=train_cfg["batch_size"],
-            shuffle=(split_name == "train"),
-            num_workers=train_cfg.get("num_workers", 0),
-            pin_memory=use_pin_memory,
-            drop_last=(split_name == "train"),
+            **loader_kwargs,
         )
         logger.info(
             "Created %s DataLoader: %d samples, %d batches",

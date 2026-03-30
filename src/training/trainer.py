@@ -171,6 +171,8 @@ class Trainer:
 
         # Gradient clipping
         self.grad_clip = train_cfg.get("gradient_clip", 0.0)
+        self.non_blocking = bool(train_cfg.get(
+            "pin_memory", False) and self.device.type == "cuda")
 
         # Early stopping — supports both new structured config and legacy flat key
         es_cfg = train_cfg.get("early_stopping", {})
@@ -226,10 +228,10 @@ class Trainer:
         n_batches = 0
 
         for signals, labels in train_loader:
-            signals = signals.to(self.device)
-            labels = labels.to(self.device)
+            signals = signals.to(self.device, non_blocking=self.non_blocking)
+            labels = labels.to(self.device, non_blocking=self.non_blocking)
 
-            self.optimizer.zero_grad()
+            self.optimizer.zero_grad(set_to_none=True)
 
             if self.use_amp:
                 with autocast():
@@ -258,7 +260,11 @@ class Trainer:
         return avg_loss
 
     @torch.no_grad()
-    def validate(self, val_loader: DataLoader) -> Dict[str, float]:
+    def validate(
+        self,
+        val_loader: DataLoader,
+        collect_outputs: bool = False,
+    ) -> Dict[str, Any]:
         """
         Run validation.
 
@@ -266,35 +272,33 @@ class Trainer:
             val_loader: Validation data loader.
 
         Returns:
-            Dictionary with ``val_loss`` and predictions.
+            Dictionary with ``val_loss`` and optional predictions.
         """
         self.model.eval()
         total_loss = 0.0
         n_batches = 0
-        all_logits = []
-        all_labels = []
+        all_logits = [] if collect_outputs else None
+        all_labels = [] if collect_outputs else None
 
         for signals, labels in val_loader:
-            signals = signals.to(self.device)
-            labels = labels.to(self.device)
+            signals = signals.to(self.device, non_blocking=self.non_blocking)
+            labels = labels.to(self.device, non_blocking=self.non_blocking)
 
             logits = self.model(signals)
             loss = self.criterion(logits, labels)
 
             total_loss += loss.item()
             n_batches += 1
-            all_logits.append(logits.cpu())
-            all_labels.append(labels.cpu())
+            if collect_outputs:
+                all_logits.append(logits.cpu())
+                all_labels.append(labels.cpu())
 
         avg_loss = total_loss / max(n_batches, 1)
-        all_logits = torch.cat(all_logits, dim=0)
-        all_labels = torch.cat(all_labels, dim=0)
-
-        return {
-            "val_loss": avg_loss,
-            "logits": all_logits,
-            "labels": all_labels,
-        }
+        result = {"val_loss": avg_loss}
+        if collect_outputs and all_logits and all_labels:
+            result["logits"] = torch.cat(all_logits, dim=0)
+            result["labels"] = torch.cat(all_labels, dim=0)
+        return result
 
     def fit(
         self,
@@ -341,7 +345,10 @@ class Trainer:
             train_loss = self.train_epoch(train_loader, epoch)
 
             # Validate
-            val_results = self.validate(val_loader)
+            collect_outputs = bool(
+                self.es_monitor and self.es_monitor != "val_loss")
+            val_results = self.validate(
+                val_loader, collect_outputs=collect_outputs)
             val_loss = val_results["val_loss"]
 
             # LR scheduler step

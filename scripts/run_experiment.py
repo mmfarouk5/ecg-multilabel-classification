@@ -5,6 +5,18 @@ End-to-end script that trains a model and runs evaluation,
 producing all outputs (models, logs, figures, metrics).
 """
 
+from src.utils import get_device
+from src.evaluation.confusion_matrix import plot_confusion_matrices, plot_multilabel_confusion_summary
+from src.evaluation.plots import plot_roc_curves, plot_training_history, plot_precision_recall_curves
+from src.evaluation.evaluator import Evaluator
+from src.training.trainer import Trainer
+from src.training.scheduler import build_scheduler
+from src.training.optimizer import build_optimizer
+from src.training.loss import build_loss
+from src.models import build_model
+from src.data.loader import load_metadata, load_raw_signals, load_scp_statements, aggregate_diagnostics
+from src.data.label_processing import compute_class_weights, encode_labels, get_label_classes
+from src.data.dataset import get_dataloaders, _is_cache_valid, _load_from_cache
 import argparse
 import json
 import logging
@@ -21,31 +33,19 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.data.dataset import get_dataloaders, _is_cache_valid, _load_from_cache
-from src.data.label_processing import compute_class_weights, encode_labels, get_label_classes
-from src.data.loader import load_metadata, load_raw_signals, load_scp_statements, aggregate_diagnostics
-from src.models import build_model
-from src.training.loss import build_loss
-from src.training.optimizer import build_optimizer
-from src.training.scheduler import build_scheduler
-from src.training.trainer import Trainer
-from src.evaluation.evaluator import Evaluator
-from src.evaluation.plots import plot_roc_curves, plot_training_history, plot_precision_recall_curves
-from src.evaluation.confusion_matrix import plot_confusion_matrices, plot_multilabel_confusion_summary
-from src.utils import get_device
 
 logger = logging.getLogger(__name__)
 
 
-def set_seed(seed: int) -> None:
+def set_seed(seed: int, deterministic: bool = True) -> None:
     """Set random seed for reproducibility."""
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
-        torch.backends.cudnn.deterministic = True
-        torch.backends.cudnn.benchmark = False
+        torch.backends.cudnn.deterministic = deterministic
+        torch.backends.cudnn.benchmark = not deterministic
 
 
 def run_experiment(config_path: str, max_samples: int = None) -> dict:
@@ -63,7 +63,8 @@ def run_experiment(config_path: str, max_samples: int = None) -> dict:
         config = yaml.safe_load(f)
 
     seed = config.get("experiment", {}).get("seed", 42)
-    set_seed(seed)
+    deterministic = config.get("experiment", {}).get("deterministic", True)
+    set_seed(seed, deterministic=deterministic)
 
     exp_name = config.get("experiment", {}).get("name", "default")
     model_name = config["model"]["name"]
@@ -75,7 +76,9 @@ def run_experiment(config_path: str, max_samples: int = None) -> dict:
 
     device = get_device()
     logger.info("=" * 60)
-    logger.info("EXPERIMENT: %s | MODEL: %s | DEVICE: %s", exp_name, model_name, device)
+    logger.info("EXPERIMENT: %s | MODEL: %s | DEVICE: %s",
+                exp_name, model_name, device)
+    logger.info("Reproducibility mode (deterministic): %s", deterministic)
     logger.info("=" * 60)
 
     # ── Data Pipeline ────────────────────────────────────────
@@ -85,7 +88,8 @@ def run_experiment(config_path: str, max_samples: int = None) -> dict:
     processed_dir = config["data"].get("processed_dir", "data/processed")
     if max_samples is None and _is_cache_valid(processed_dir):
         import json
-        class_weights = torch.tensor(np.load(Path(processed_dir) / "class_weights.npy")).to(device)
+        class_weights = torch.tensor(
+            np.load(Path(processed_dir) / "class_weights.npy")).to(device)
         with open(Path(processed_dir) / "label_classes.json") as f:
             label_classes = json.load(f)
         logger.info("Loaded class weights and label classes from cache")
@@ -95,9 +99,12 @@ def run_experiment(config_path: str, max_samples: int = None) -> dict:
         if max_samples:
             metadata = metadata.iloc[:max_samples]
         scp_df = load_scp_statements(data_dir)
-        diag_labels = aggregate_diagnostics(metadata, scp_df, config["data"]["label_type"])
-        label_matrix, label_classes = encode_labels(diag_labels, label_type=config["data"]["label_type"])
-        class_weights = torch.tensor(compute_class_weights(label_matrix)).to(device)
+        diag_labels = aggregate_diagnostics(
+            metadata, scp_df, config["data"]["label_type"])
+        label_matrix, label_classes = encode_labels(
+            diag_labels, label_type=config["data"]["label_type"])
+        class_weights = torch.tensor(
+            compute_class_weights(label_matrix)).to(device)
 
     # ── Model ────────────────────────────────────────────────
     model = build_model(config)
@@ -136,7 +143,8 @@ def run_experiment(config_path: str, max_samples: int = None) -> dict:
         label_classes=label_classes,
     )
 
-    test_results = evaluator.evaluate(dataloaders["test"], optimize_thresholds=True)
+    test_results = evaluator.evaluate(
+        dataloaders["test"], optimize_thresholds=True)
 
     # ── Outputs ──────────────────────────────────────────────
     figures_dir = Path(config["output"]["figures_dir"]) / model_name
@@ -194,7 +202,8 @@ def run_experiment(config_path: str, max_samples: int = None) -> dict:
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Run ECG classification experiment")
+    parser = argparse.ArgumentParser(
+        description="Run ECG classification experiment")
     parser.add_argument("--config", type=str, default="configs/default.yaml")
     parser.add_argument("--max-samples", type=int, default=None)
     args = parser.parse_args()

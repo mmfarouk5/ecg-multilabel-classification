@@ -36,7 +36,7 @@ training:
   batch_size: 128
   learning_rate: 0.001
   weight_decay: 0.0001
-  loss: "weighted_bce"          # weighted_bce | focal
+  loss: "weighted_bce"          # weighted_bce | focal | asymmetric_focal
   optimizer: "adamw"              # adam | adamw | sgd
   scheduler: "cosine"           # cosine | step | plateau
   scheduler_params:
@@ -45,10 +45,18 @@ training:
   focal_loss_params:
     alpha: 1.0
     gamma: 2.0
+  asymmetric_focal_loss_params:
+    gamma_pos: 1.0
+    gamma_neg: 4.0
+    clip: 0.05
   amp: true                     # automatic mixed precision
   gradient_clip: 1.0
   num_workers: 4
   pin_memory: true
+  persistent_workers: true
+  prefetch_factor: 2
+  class_aware_sampling:
+    enabled: false
 
   early_stopping:
     enabled: true
@@ -68,5 +76,6 @@ output:
 experiment:
   name: "default"
   seed: 42
+  deterministic: true
   use_tensorboard: true
   use_wandb: false

@@ -103,6 +103,51 @@ class FocalLoss(nn.Module):
         return loss.mean()
 
 
+class AsymmetricFocalLoss(nn.Module):
+    """
+    Asymmetric focal loss for imbalanced multi-label classification.
+
+    Applies different focusing parameters for positive and negative terms,
+    usually with larger ``gamma_neg`` to down-weight easy negatives.
+    """
+
+    def __init__(
+        self,
+        gamma_pos: float = 1.0,
+        gamma_neg: float = 4.0,
+        clip: float = 0.05,
+        class_weights: Optional[torch.Tensor] = None,
+    ):
+        super().__init__()
+        self.gamma_pos = gamma_pos
+        self.gamma_neg = gamma_neg
+        self.clip = clip
+        self.register_buffer(
+            "class_weights",
+            class_weights if class_weights is not None else None,
+        )
+
+    def forward(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+        probs = torch.sigmoid(logits)
+
+        p_pos = probs
+        p_neg = 1.0 - probs
+        if self.clip is not None and self.clip > 0:
+            p_neg = (p_neg + self.clip).clamp(max=1.0)
+
+        loss_pos = targets * \
+            torch.log(p_pos.clamp(min=1e-8)) * \
+            ((1.0 - p_pos) ** self.gamma_pos)
+        loss_neg = (1.0 - targets) * torch.log(p_neg.clamp(min=1e-8)
+                                               ) * (probs ** self.gamma_neg)
+        loss = -(loss_pos + loss_neg)
+
+        if self.class_weights is not None:
+            loss = loss * self.class_weights.unsqueeze(0)
+
+        return loss.mean()
+
+
 def build_loss(
     config: Dict[str, Any],
     class_weights: Optional[torch.Tensor] = None,
@@ -126,6 +171,14 @@ def build_loss(
         return FocalLoss(
             alpha=focal_params.get("alpha", 1.0),
             gamma=focal_params.get("gamma", 2.0),
+            class_weights=class_weights,
+        )
+    elif loss_name == "asymmetric_focal":
+        asf_params = config["training"].get("asymmetric_focal_loss_params", {})
+        return AsymmetricFocalLoss(
+            gamma_pos=asf_params.get("gamma_pos", 1.0),
+            gamma_neg=asf_params.get("gamma_neg", 4.0),
+            clip=asf_params.get("clip", 0.05),
             class_weights=class_weights,
         )
     elif loss_name == "bce":
