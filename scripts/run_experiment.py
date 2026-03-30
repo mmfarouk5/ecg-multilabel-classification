@@ -112,7 +112,7 @@ def run_experiment(config_path: str, max_samples: int = None) -> dict:
     writer = None
     if config.get("experiment", {}).get("use_tensorboard", False):
         from torch.utils.tensorboard import SummaryWriter
-        log_dir = Path(config["output"]["logs_dir"]) / exp_name / model_name
+        log_dir = Path(config["output"]["logs_dir"]) / model_name
         writer = SummaryWriter(log_dir=str(log_dir))
 
     trainer = Trainer(
@@ -139,8 +139,8 @@ def run_experiment(config_path: str, max_samples: int = None) -> dict:
     test_results = evaluator.evaluate(dataloaders["test"], optimize_thresholds=True)
 
     # ── Outputs ──────────────────────────────────────────────
-    figures_dir = Path(config["output"]["figures_dir"]) / exp_name / model_name
-    results_dir = Path(config["output"]["results_dir"]) / exp_name / model_name
+    figures_dir = Path(config["output"]["figures_dir"]) / model_name
+    results_dir = Path(config["output"]["results_dir"]) / model_name
 
     # Save results
     evaluator.save_results(test_results, str(results_dir))
