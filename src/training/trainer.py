@@ -164,7 +164,8 @@ class Trainer:
         # AMP (only supported on CUDA, not MPS)
         amp_requested = train_cfg.get("amp", False)
         if amp_requested and self.device.type == "mps":
-            logger.warning("AMP is not supported on MPS device — disabling AMP automatically.")
+            logger.warning(
+                "AMP is not supported on MPS device — disabling AMP automatically.")
         self.use_amp = amp_requested and self.device.type == "cuda"
         self.scaler = GradScaler() if self.use_amp else None
 
@@ -224,14 +225,7 @@ class Trainer:
         total_loss = 0.0
         n_batches = 0
 
-        pbar = tqdm(
-            train_loader,
-            desc=f"  Train Epoch {epoch + 1}",
-            leave=False,
-            bar_format="{l_bar}{bar:30}{r_bar}",
-        )
-
-        for batch_idx, (signals, labels) in enumerate(pbar):
+        for signals, labels in train_loader:
             signals = signals.to(self.device)
             labels = labels.to(self.device)
 
@@ -244,7 +238,8 @@ class Trainer:
                 self.scaler.scale(loss).backward()
                 if self.grad_clip > 0:
                     self.scaler.unscale_(self.optimizer)
-                    nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_clip)
+                    nn.utils.clip_grad_norm_(
+                        self.model.parameters(), self.grad_clip)
                 self.scaler.step(self.optimizer)
                 self.scaler.update()
             else:
@@ -252,14 +247,12 @@ class Trainer:
                 loss = self.criterion(logits, labels)
                 loss.backward()
                 if self.grad_clip > 0:
-                    nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_clip)
+                    nn.utils.clip_grad_norm_(
+                        self.model.parameters(), self.grad_clip)
                 self.optimizer.step()
 
             total_loss += loss.item()
             n_batches += 1
-
-            # Update progress bar with running loss
-            pbar.set_postfix({"loss": f"{total_loss / n_batches:.4f}"})
 
         avg_loss = total_loss / max(n_batches, 1)
         return avg_loss
@@ -281,14 +274,7 @@ class Trainer:
         all_logits = []
         all_labels = []
 
-        pbar = tqdm(
-            val_loader,
-            desc="  Validating",
-            leave=False,
-            bar_format="{l_bar}{bar:30}{r_bar}",
-        )
-
-        for signals, labels in pbar:
+        for signals, labels in val_loader:
             signals = signals.to(self.device)
             labels = labels.to(self.device)
 
@@ -299,8 +285,6 @@ class Trainer:
             n_batches += 1
             all_logits.append(logits.cpu())
             all_labels.append(labels.cpu())
-
-            pbar.set_postfix({"val_loss": f"{total_loss / n_batches:.4f}"})
 
         avg_loss = total_loss / max(n_batches, 1)
         all_logits = torch.cat(all_logits, dim=0)
@@ -334,24 +318,24 @@ class Trainer:
 
         logger.info("Starting training: %d epochs on %s", epochs, self.device)
         logger.info("Model: %s | AMP: %s | Grad clip: %s",
-                     model_name, self.use_amp, self.grad_clip)
+                    model_name, self.use_amp, self.grad_clip)
         if self.early_stopping:
             logger.info(
                 "Early stopping: monitor=%s, patience=%d, min_delta=%.4f, mode=%s",
                 self.es_monitor, self.early_stopping.patience,
                 self.early_stopping.min_delta,
-                self.early_stopping.mode if hasattr(self.early_stopping, 'mode') else 'min',
+                self.early_stopping.mode if hasattr(
+                    self.early_stopping, 'mode') else 'min',
             )
 
         epoch_pbar = tqdm(
             range(epochs),
-            desc="🏋️ Training",
-            unit="epoch",
-            bar_format="{l_bar}{bar:30}{r_bar}",
+            desc=f"{model_name}",
+            unit="ep",
+            ncols=100,
         )
 
         for epoch in epoch_pbar:
-            start_time = time.time()
 
             # Train
             train_loss = self.train_epoch(train_loader, epoch)
@@ -369,27 +353,21 @@ class Trainer:
                 else:
                     self.scheduler.step()
 
-            elapsed = time.time() - start_time
-
             # Log
             self.history["train_loss"].append(train_loss)
             self.history["val_loss"].append(val_loss)
             self.history["learning_rate"].append(current_lr)
 
             # Determine monitored score for early stopping
-            monitor_score = val_loss  # default
+            monitor_score = val_loss
             if self.es_monitor and self.es_monitor != "val_loss":
                 monitor_score = val_results.get(self.es_monitor, val_loss)
 
-            # Early stopping status for progress bar
-            es_info = ""
-            if self.early_stopping:
-                es_info = f" ES:{self.early_stopping.counter}/{self.early_stopping.patience}"
-
-            # Update epoch progress bar
-            epoch_pbar.set_postfix_str(
-                f"train={train_loss:.4f} val={val_loss:.4f} "
-                f"lr={current_lr:.1e} best={self.best_val_loss:.4f}{es_info}"
+            # Update progress bar
+            epoch_pbar.set_postfix(
+                loss=f"{train_loss:.4f}",
+                val=f"{val_loss:.4f}",
+                best=f"{self.best_val_loss:.4f}",
             )
 
             # TensorBoard
@@ -408,11 +386,9 @@ class Trainer:
 
             # Early stopping check
             if self.early_stopping:
-                should_stop = self.early_stopping(monitor_score, self.model, epoch)
+                should_stop = self.early_stopping(
+                    monitor_score, self.model, epoch)
                 if should_stop:
-                    epoch_pbar.set_postfix_str(
-                        f"⛔ Early stopping! Best val_loss={self.best_val_loss:.4f}"
-                    )
                     break
 
         # Restore best weights if early stopping was used
@@ -425,7 +401,8 @@ class Trainer:
             epoch, val_loss,
         )
 
-        logger.info("Training complete. Best val loss: %.4f", self.best_val_loss)
+        logger.info("Training complete. Best val loss: %.4f",
+                    self.best_val_loss)
         return self.history
 
     def save_checkpoint(
@@ -469,5 +446,6 @@ class Trainer:
         if self.scheduler is not None and "scheduler_state_dict" in checkpoint:
             self.scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
 
-        logger.info("Loaded checkpoint from %s (epoch %d)", path, checkpoint["epoch"])
+        logger.info("Loaded checkpoint from %s (epoch %d)",
+                    path, checkpoint["epoch"])
         return checkpoint
