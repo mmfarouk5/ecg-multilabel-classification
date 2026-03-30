@@ -57,7 +57,7 @@ training:
   early_stopping:
     enabled: true
     monitor: "val_loss"          # val_loss | val_f1_macro
-    patience: 10
+    patience: 5
     min_delta: 0.001             # minimum improvement to count as progress
     mode: "min"                  # min (for loss) | max (for metrics like F1)
     restore_best_weights: true
