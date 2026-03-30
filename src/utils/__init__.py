@@ -1,7 +1,20 @@
 """
-src.utils — Shared utilities for the ECG classification project.
+Shared utility functions for ECG classification pipeline.
 """
 
-from src.utils.logger import setup_logger
+import torch
 
-__all__ = ["setup_logger"]
+
+def get_device() -> torch.device:
+    """
+    Select the best available device: CUDA → MPS (Apple Silicon) → CPU.
+
+    Returns:
+        torch.device for training/inference.
+    """
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        return torch.device("mps")
+    else:
+        return torch.device("cpu")

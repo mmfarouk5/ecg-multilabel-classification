@@ -28,6 +28,7 @@ from src.training.loss import build_loss
 from src.training.optimizer import build_optimizer
 from src.training.scheduler import build_scheduler
 from src.training.trainer import Trainer
+from src.utils import get_device
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +68,7 @@ def train(config_path: str, max_samples: int = None) -> dict:
         format="%(asctime)s | %(name)s | %(levelname)s | %(message)s",
     )
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = get_device()
     logger.info("Device: %s | Seed: %d", device, seed)
 
     # Data

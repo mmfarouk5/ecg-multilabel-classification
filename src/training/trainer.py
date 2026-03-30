@@ -22,6 +22,8 @@ from torch.cuda.amp import GradScaler, autocast
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
+from src.utils import get_device
+
 logger = logging.getLogger(__name__)
 
 
@@ -151,15 +153,18 @@ class Trainer:
         self.config = config or {}
         train_cfg = self.config.get("training", {})
 
-        self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = device or get_device()
         self.model = model.to(self.device)
         self.criterion = criterion.to(self.device)
         self.optimizer = optimizer
         self.scheduler = scheduler
         self.writer = writer
 
-        # AMP
-        self.use_amp = train_cfg.get("amp", False) and self.device.type == "cuda"
+        # AMP (only supported on CUDA, not MPS)
+        amp_requested = train_cfg.get("amp", False)
+        if amp_requested and self.device.type == "mps":
+            logger.warning("AMP is not supported on MPS device — disabling AMP automatically.")
+        self.use_amp = amp_requested and self.device.type == "cuda"
         self.scaler = GradScaler() if self.use_amp else None
 
         # Gradient clipping

@@ -21,6 +21,7 @@ from src.training.loss import build_loss
 from src.training.optimizer import build_optimizer
 from src.training.scheduler import build_scheduler
 from src.training.trainer import Trainer
+from src.utils import get_device
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +44,7 @@ def run_cross_validation(
     data_cfg = config["data"]
     split_cfg = config["split"]
     train_cfg = config["training"]
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = get_device()
 
     # Load data
     metadata = load_metadata(data_cfg["raw_dir"])

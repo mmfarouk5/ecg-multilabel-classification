@@ -32,6 +32,7 @@ from src.training.trainer import Trainer
 from src.evaluation.evaluator import Evaluator
 from src.evaluation.plots import plot_roc_curves, plot_training_history, plot_precision_recall_curves
 from src.evaluation.confusion_matrix import plot_confusion_matrices, plot_multilabel_confusion_summary
+from src.utils import get_device
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +73,7 @@ def run_experiment(config_path: str, max_samples: int = None) -> dict:
         format="%(asctime)s | %(name)s | %(levelname)s | %(message)s",
     )
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = get_device()
     logger.info("=" * 60)
     logger.info("EXPERIMENT: %s | MODEL: %s | DEVICE: %s", exp_name, model_name, device)
     logger.info("=" * 60)
