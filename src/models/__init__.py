@@ -12,6 +12,7 @@ import torch.nn as nn
 from src.models.cnn_1d import CNN1D
 from src.models.leadwise_cnn import LeadwiseCNN
 from src.models.resnet import ResNet1D
+from src.models.pretrained_resnet import PretrainedResNet1D
 from src.models.lstm import LSTMModel
 from src.models.transformer import TransformerModel
 from src.models.cnn_lstm import CNNLSTM
@@ -22,6 +23,7 @@ MODEL_REGISTRY: Dict[str, type] = {
     "cnn_1d": CNN1D,
     "leadwise_cnn": LeadwiseCNN,
     "resnet": ResNet1D,
+    "pretrained_resnet": PretrainedResNet1D,
     "lstm": LSTMModel,
     "transformer": TransformerModel,
     "cnn_lstm": CNNLSTM,
@@ -72,6 +74,7 @@ __all__ = [
     "CNN1D",
     "LeadwiseCNN",
     "ResNet1D",
+    "PretrainedResNet1D",
     "LSTMModel",
     "TransformerModel",
     "CNNLSTM",

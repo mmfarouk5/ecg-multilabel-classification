@@ -1,0 +1,86 @@
+# ============================================================
+# ECG Classification — Pretrained ResNet Configuration
+# ============================================================
+# Uses xresnet1d-D architecture with support for loading
+# pretrained backbone weights for transfer learning.
+#
+# Usage:
+#   1. Train from scratch (default):
+#      python scripts/run_experiment.py --config configs/pretrained_resnet.yaml
+#
+#   2. Fine-tune from pretrained backbone:
+#      Set pretrained_path to a .pt checkpoint file
+#      Optionally set freeze_backbone: true for linear probing
+# ============================================================
+
+data:
+  raw_dir: "data/raw/ptb-xl-a-large-publicly-available-electrocardiography-dataset-1.0.1"
+  processed_dir: "data/processed"
+  sampling_rate: 100
+  label_type: "diagnostic_superclass"
+
+preprocessing:
+  bandpass:
+    lowcut: 0.5
+    highcut: 40.0
+    order: 4
+  baseline_wander:
+    cutoff: 0.5
+    order: 4
+  outlier_clip_percentile: 99
+  normalize: true
+
+split:
+  val_fold: 9
+  test_fold: 10
+  n_kfolds: 5
+  seed: 42
+
+model:
+  name: "pretrained_resnet"
+  input_channels: 12
+  num_classes: 5
+  params:
+    base_filters: 64
+    layers: [2, 2, 2, 2]        # ResNet-18 style: [2,2,2,2], ResNet-34: [3,4,6,3]
+    kernel_size: 7
+    dropout: 0.2
+    pretrained_path: null        # Set to .pt file path for transfer learning
+    freeze_backbone: false       # Set true for linear probing first
+
+training:
+  epochs: 80
+  batch_size: 64
+  learning_rate: 0.0005
+  weight_decay: 0.0001
+  loss: "weighted_bce"
+  optimizer: "adamw"
+  scheduler: "cosine"
+  scheduler_params:
+    T_max: 80
+    eta_min: 0.000001
+  amp: true
+  gradient_clip: 1.0
+  num_workers: 4
+  pin_memory: true
+
+  early_stopping:
+    enabled: true
+    monitor: "val_loss"
+    patience: 15
+    min_delta: 0.001
+    mode: "min"
+    restore_best_weights: true
+
+output:
+  dir: "outputs"
+  figures_dir: "outputs/figures"
+  logs_dir: "outputs/logs"
+  models_dir: "outputs/models"
+  results_dir: "outputs/results"
+
+experiment:
+  name: "pretrained_resnet"
+  seed: 42
+  use_tensorboard: true
+  use_wandb: false
