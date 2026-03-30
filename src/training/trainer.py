@@ -20,6 +20,7 @@ import torch
 import torch.nn as nn
 from torch.cuda.amp import GradScaler, autocast
 from torch.utils.data import DataLoader
+from tqdm import tqdm
 from torch.utils.tensorboard import SummaryWriter
 
 from src.utils import get_device
@@ -223,7 +224,14 @@ class Trainer:
         total_loss = 0.0
         n_batches = 0
 
-        for batch_idx, (signals, labels) in enumerate(train_loader):
+        pbar = tqdm(
+            train_loader,
+            desc=f"  Train Epoch {epoch + 1}",
+            leave=False,
+            bar_format="{l_bar}{bar:30}{r_bar}",
+        )
+
+        for batch_idx, (signals, labels) in enumerate(pbar):
             signals = signals.to(self.device)
             labels = labels.to(self.device)
 
@@ -250,6 +258,9 @@ class Trainer:
             total_loss += loss.item()
             n_batches += 1
 
+            # Update progress bar with running loss
+            pbar.set_postfix({"loss": f"{total_loss / n_batches:.4f}"})
+
         avg_loss = total_loss / max(n_batches, 1)
         return avg_loss
 
@@ -270,7 +281,14 @@ class Trainer:
         all_logits = []
         all_labels = []
 
-        for signals, labels in val_loader:
+        pbar = tqdm(
+            val_loader,
+            desc="  Validating",
+            leave=False,
+            bar_format="{l_bar}{bar:30}{r_bar}",
+        )
+
+        for signals, labels in pbar:
             signals = signals.to(self.device)
             labels = labels.to(self.device)
 
@@ -281,6 +299,8 @@ class Trainer:
             n_batches += 1
             all_logits.append(logits.cpu())
             all_labels.append(labels.cpu())
+
+            pbar.set_postfix({"val_loss": f"{total_loss / n_batches:.4f}"})
 
         avg_loss = total_loss / max(n_batches, 1)
         all_logits = torch.cat(all_logits, dim=0)
@@ -323,7 +343,14 @@ class Trainer:
                 self.early_stopping.mode if hasattr(self.early_stopping, 'mode') else 'min',
             )
 
-        for epoch in range(epochs):
+        epoch_pbar = tqdm(
+            range(epochs),
+            desc="🏋️ Training",
+            unit="epoch",
+            bar_format="{l_bar}{bar:30}{r_bar}",
+        )
+
+        for epoch in epoch_pbar:
             start_time = time.time()
 
             # Train
@@ -354,14 +381,15 @@ class Trainer:
             if self.es_monitor and self.es_monitor != "val_loss":
                 monitor_score = val_results.get(self.es_monitor, val_loss)
 
-            # Early stopping status for logging
-            es_status = ""
+            # Early stopping status for progress bar
+            es_info = ""
             if self.early_stopping:
-                es_status = f" | ES: {self.early_stopping.status}"
+                es_info = f" ES:{self.early_stopping.counter}/{self.early_stopping.patience}"
 
-            logger.info(
-                "Epoch %3d/%d | Train Loss: %.4f | Val Loss: %.4f | LR: %.2e | Time: %.1fs%s",
-                epoch + 1, epochs, train_loss, val_loss, current_lr, elapsed, es_status,
+            # Update epoch progress bar
+            epoch_pbar.set_postfix_str(
+                f"train={train_loss:.4f} val={val_loss:.4f} "
+                f"lr={current_lr:.1e} best={self.best_val_loss:.4f}{es_info}"
             )
 
             # TensorBoard
@@ -382,6 +410,9 @@ class Trainer:
             if self.early_stopping:
                 should_stop = self.early_stopping(monitor_score, self.model, epoch)
                 if should_stop:
+                    epoch_pbar.set_postfix_str(
+                        f"⛔ Early stopping! Best val_loss={self.best_val_loss:.4f}"
+                    )
                     break
 
         # Restore best weights if early stopping was used
