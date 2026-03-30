@@ -172,6 +172,10 @@ def get_dataloaders(
             test_fold=split_cfg["test_fold"],
         )
 
+    # pin_memory only works on CUDA, not MPS
+    from src.utils import get_device
+    use_pin_memory = train_cfg.get("pin_memory", False) and get_device().type == "cuda"
+
     # ── Build DataLoaders ────────────────────────────────────
     dataloaders = {}
     for split_name in ["train", "val", "test"]:
@@ -182,7 +186,7 @@ def get_dataloaders(
             batch_size=train_cfg["batch_size"],
             shuffle=(split_name == "train"),
             num_workers=train_cfg.get("num_workers", 0),
-            pin_memory=train_cfg.get("pin_memory", False),
+            pin_memory=use_pin_memory,
             drop_last=(split_name == "train"),
         )
         logger.info(
