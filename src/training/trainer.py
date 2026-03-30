@@ -5,7 +5,7 @@ Handles the full training loop including:
 - Forward/backward passes with AMP
 - Gradient clipping
 - Validation evaluation
-- Early stopping
+- Early stopping (with min_delta, monitor, mode support)
 - Checkpoint saving
 - TensorBoard logging
 """
@@ -23,6 +23,105 @@ from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
 logger = logging.getLogger(__name__)
+
+
+class EarlyStopping:
+    """
+    Early stopping handler with configurable monitoring.
+
+    Tracks a monitored metric and stops training when it has not
+    improved by at least ``min_delta`` for ``patience`` epochs.
+
+    Args:
+        patience: Number of epochs to wait for improvement.
+        min_delta: Minimum change to qualify as an improvement.
+        mode: ``"min"`` (lower is better, e.g. loss) or
+              ``"max"`` (higher is better, e.g. F1).
+        restore_best_weights: Whether to restore model weights from the
+            best epoch when stopping.
+    """
+
+    def __init__(
+        self,
+        patience: int = 10,
+        min_delta: float = 0.0,
+        mode: str = "min",
+        restore_best_weights: bool = True,
+    ):
+        self.patience = patience
+        self.min_delta = min_delta
+        self.mode = mode
+        self.restore_best_weights = restore_best_weights
+
+        self.best_score: Optional[float] = None
+        self.best_epoch: int = 0
+        self.counter: int = 0
+        self.should_stop: bool = False
+        self.best_state_dict: Optional[dict] = None
+
+        if mode == "min":
+            self.is_improvement = lambda current, best: current < best - min_delta
+        elif mode == "max":
+            self.is_improvement = lambda current, best: current > best + min_delta
+        else:
+            raise ValueError(f"mode must be 'min' or 'max', got '{mode}'")
+
+    def __call__(
+        self,
+        score: float,
+        model: nn.Module,
+        epoch: int,
+    ) -> bool:
+        """
+        Check whether training should stop.
+
+        Args:
+            score: Current value of the monitored metric.
+            model: The model (for saving best weights).
+            epoch: Current epoch number.
+
+        Returns:
+            True if training should stop.
+        """
+        if self.best_score is None or self.is_improvement(score, self.best_score):
+            self.best_score = score
+            self.best_epoch = epoch
+            self.counter = 0
+            if self.restore_best_weights:
+                self.best_state_dict = {
+                    k: v.clone() for k, v in model.state_dict().items()
+                }
+            return False
+        else:
+            self.counter += 1
+            if self.counter >= self.patience:
+                self.should_stop = True
+                logger.info(
+                    "Early stopping triggered at epoch %d "
+                    "(no improvement for %d epochs, best=%.4f at epoch %d)",
+                    epoch + 1, self.patience, self.best_score, self.best_epoch + 1,
+                )
+                return True
+            return False
+
+    def restore(self, model: nn.Module) -> None:
+        """Restore model to the best weights if available."""
+        if self.restore_best_weights and self.best_state_dict is not None:
+            model.load_state_dict(self.best_state_dict)
+            logger.info(
+                "Restored best model weights from epoch %d (score=%.4f)",
+                self.best_epoch + 1, self.best_score,
+            )
+
+    @property
+    def status(self) -> str:
+        """Human-readable status string."""
+        if self.best_score is None:
+            return "not started"
+        return (
+            f"best={self.best_score:.4f} at epoch {self.best_epoch + 1}, "
+            f"patience {self.counter}/{self.patience}"
+        )
 
 
 class Trainer:
@@ -66,15 +165,36 @@ class Trainer:
         # Gradient clipping
         self.grad_clip = train_cfg.get("gradient_clip", 0.0)
 
-        # Early stopping
-        self.patience = train_cfg.get("early_stopping_patience", 10)
-        self.best_val_loss = float("inf")
-        self.epochs_no_improve = 0
+        # Early stopping — supports both new structured config and legacy flat key
+        es_cfg = train_cfg.get("early_stopping", {})
+        if isinstance(es_cfg, dict) and es_cfg.get("enabled", True):
+            self.early_stopping = EarlyStopping(
+                patience=es_cfg.get("patience", 10),
+                min_delta=es_cfg.get("min_delta", 0.0),
+                mode=es_cfg.get("mode", "min"),
+                restore_best_weights=es_cfg.get("restore_best_weights", True),
+            )
+            self.es_monitor = es_cfg.get("monitor", "val_loss")
+        elif "early_stopping_patience" in train_cfg:
+            # Legacy fallback
+            self.early_stopping = EarlyStopping(
+                patience=train_cfg["early_stopping_patience"],
+                min_delta=0.0,
+                mode="min",
+                restore_best_weights=True,
+            )
+            self.es_monitor = "val_loss"
+        else:
+            self.early_stopping = None
+            self.es_monitor = None
 
         # Output paths
         out_cfg = self.config.get("output", {})
         self.models_dir = Path(out_cfg.get("models_dir", "outputs/models"))
         self.models_dir.mkdir(parents=True, exist_ok=True)
+
+        # Track best for checkpointing
+        self.best_val_loss = float("inf")
 
         # Training history
         self.history = {
@@ -174,7 +294,7 @@ class Trainer:
         epochs: Optional[int] = None,
     ) -> Dict[str, list]:
         """
-        Full training loop.
+        Full training loop with early stopping.
 
         Args:
             train_loader: Training data loader.
@@ -190,6 +310,13 @@ class Trainer:
         logger.info("Starting training: %d epochs on %s", epochs, self.device)
         logger.info("Model: %s | AMP: %s | Grad clip: %s",
                      model_name, self.use_amp, self.grad_clip)
+        if self.early_stopping:
+            logger.info(
+                "Early stopping: monitor=%s, patience=%d, min_delta=%.4f, mode=%s",
+                self.es_monitor, self.early_stopping.patience,
+                self.early_stopping.min_delta,
+                self.early_stopping.mode if hasattr(self.early_stopping, 'mode') else 'min',
+            )
 
         for epoch in range(epochs):
             start_time = time.time()
@@ -217,9 +344,19 @@ class Trainer:
             self.history["val_loss"].append(val_loss)
             self.history["learning_rate"].append(current_lr)
 
+            # Determine monitored score for early stopping
+            monitor_score = val_loss  # default
+            if self.es_monitor and self.es_monitor != "val_loss":
+                monitor_score = val_results.get(self.es_monitor, val_loss)
+
+            # Early stopping status for logging
+            es_status = ""
+            if self.early_stopping:
+                es_status = f" | ES: {self.early_stopping.status}"
+
             logger.info(
-                "Epoch %3d/%d | Train Loss: %.4f | Val Loss: %.4f | LR: %.2e | Time: %.1fs",
-                epoch + 1, epochs, train_loss, val_loss, current_lr, elapsed,
+                "Epoch %3d/%d | Train Loss: %.4f | Val Loss: %.4f | LR: %.2e | Time: %.1fs%s",
+                epoch + 1, epochs, train_loss, val_loss, current_lr, elapsed, es_status,
             )
 
             # TensorBoard
@@ -228,19 +365,23 @@ class Trainer:
                 self.writer.add_scalar("Loss/val", val_loss, epoch)
                 self.writer.add_scalar("LR", current_lr, epoch)
 
-            # Early stopping + checkpoint
+            # Checkpointing (always save best by val_loss)
             if val_loss < self.best_val_loss:
                 self.best_val_loss = val_loss
-                self.epochs_no_improve = 0
                 self.save_checkpoint(
                     self.models_dir / f"best_{model_name}.pt",
                     epoch, val_loss,
                 )
-            else:
-                self.epochs_no_improve += 1
-                if self.epochs_no_improve >= self.patience:
-                    logger.info("Early stopping triggered at epoch %d", epoch + 1)
+
+            # Early stopping check
+            if self.early_stopping:
+                should_stop = self.early_stopping(monitor_score, self.model, epoch)
+                if should_stop:
                     break
+
+        # Restore best weights if early stopping was used
+        if self.early_stopping and self.early_stopping.restore_best_weights:
+            self.early_stopping.restore(self.model)
 
         # Save final checkpoint
         self.save_checkpoint(

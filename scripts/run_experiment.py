@@ -21,7 +21,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.data.dataset import get_dataloaders
+from src.data.dataset import get_dataloaders, _is_cache_valid, _load_from_cache
 from src.data.label_processing import compute_class_weights, encode_labels, get_label_classes
 from src.data.loader import load_metadata, load_raw_signals, load_scp_statements, aggregate_diagnostics
 from src.models import build_model
@@ -80,15 +80,23 @@ def run_experiment(config_path: str, max_samples: int = None) -> dict:
     # ── Data Pipeline ────────────────────────────────────────
     dataloaders = get_dataloaders(config, max_samples=max_samples)
 
-    # Class weights
-    data_dir = config["data"]["raw_dir"]
-    metadata = load_metadata(data_dir)
-    if max_samples:
-        metadata = metadata.iloc[:max_samples]
-    scp_df = load_scp_statements(data_dir)
-    diag_labels = aggregate_diagnostics(metadata, scp_df, config["data"]["label_type"])
-    label_matrix, label_classes = encode_labels(diag_labels, label_type=config["data"]["label_type"])
-    class_weights = torch.tensor(compute_class_weights(label_matrix)).to(device)
+    # Load class weights + label classes — from cache or compute
+    processed_dir = config["data"].get("processed_dir", "data/processed")
+    if max_samples is None and _is_cache_valid(processed_dir):
+        import json
+        class_weights = torch.tensor(np.load(Path(processed_dir) / "class_weights.npy")).to(device)
+        with open(Path(processed_dir) / "label_classes.json") as f:
+            label_classes = json.load(f)
+        logger.info("Loaded class weights and label classes from cache")
+    else:
+        data_dir = config["data"]["raw_dir"]
+        metadata = load_metadata(data_dir)
+        if max_samples:
+            metadata = metadata.iloc[:max_samples]
+        scp_df = load_scp_statements(data_dir)
+        diag_labels = aggregate_diagnostics(metadata, scp_df, config["data"]["label_type"])
+        label_matrix, label_classes = encode_labels(diag_labels, label_type=config["data"]["label_type"])
+        class_weights = torch.tensor(compute_class_weights(label_matrix)).to(device)
 
     # ── Model ────────────────────────────────────────────────
     model = build_model(config)

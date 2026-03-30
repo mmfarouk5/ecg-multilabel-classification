@@ -20,7 +20,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.data.dataset import get_dataloaders
+from src.data.dataset import get_dataloaders, _is_cache_valid, _load_from_cache
 from src.data.label_processing import compute_class_weights, encode_labels
 from src.data.loader import load_metadata, load_scp_statements, aggregate_diagnostics
 from src.models import build_model
@@ -73,15 +73,20 @@ def train(config_path: str, max_samples: int = None) -> dict:
     # Data
     dataloaders = get_dataloaders(config, max_samples=max_samples)
 
-    # Compute class weights for loss
-    data_dir = config["data"]["raw_dir"]
-    metadata = load_metadata(data_dir)
-    if max_samples:
-        metadata = metadata.iloc[:max_samples]
-    scp_df = load_scp_statements(data_dir)
-    diag_labels = aggregate_diagnostics(metadata, scp_df, config["data"]["label_type"])
-    label_matrix, _ = encode_labels(diag_labels, label_type=config["data"]["label_type"])
-    class_weights = torch.tensor(compute_class_weights(label_matrix)).to(device)
+    # Load class weights — from cache if available, else compute
+    processed_dir = config["data"].get("processed_dir", "data/processed")
+    if max_samples is None and _is_cache_valid(processed_dir):
+        class_weights = torch.tensor(np.load(Path(processed_dir) / "class_weights.npy")).to(device)
+        logger.info("Loaded class weights from cache")
+    else:
+        data_dir = config["data"]["raw_dir"]
+        metadata = load_metadata(data_dir)
+        if max_samples:
+            metadata = metadata.iloc[:max_samples]
+        scp_df = load_scp_statements(data_dir)
+        diag_labels = aggregate_diagnostics(metadata, scp_df, config["data"]["label_type"])
+        label_matrix, _ = encode_labels(diag_labels, label_type=config["data"]["label_type"])
+        class_weights = torch.tensor(compute_class_weights(label_matrix)).to(device)
 
     # Model
     model = build_model(config)

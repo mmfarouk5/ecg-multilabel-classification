@@ -1,14 +1,16 @@
 """
 PyTorch Dataset and DataLoader utilities for ECG signals.
 
-Provides ``ECGDataset`` and a convenience ``get_dataloaders`` function
-that orchestrates loading, preprocessing, encoding, splitting, and
-DataLoader creation from a config dict.
+Provides ``ECGDataset`` and a convenience ``get_dataloaders`` function.
+Supports two modes:
+  1. **Cached** (fast): loads preprocessed ``.npy`` files from ``data/processed/``
+  2. **On-the-fly** (fallback): loads raw signals and preprocesses from scratch
 """
 
+import json
 import logging
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import torch
@@ -59,6 +61,51 @@ class ECGDataset(Dataset):
         return signal, label
 
 
+def _load_from_cache(
+    processed_dir: str,
+) -> Tuple[np.ndarray, np.ndarray, List[str], np.ndarray, Dict[str, np.ndarray]]:
+    """
+    Load preprocessed data from cached .npy files.
+
+    Args:
+        processed_dir: Path to the ``data/processed/`` directory.
+
+    Returns:
+        Tuple of (signals, label_matrix, label_classes, class_weights, splits).
+    """
+    p = Path(processed_dir)
+
+    signals = np.load(p / "signals.npy")
+    labels = np.load(p / "labels.npy")
+    class_weights = np.load(p / "class_weights.npy")
+
+    with open(p / "label_classes.json") as f:
+        label_classes = json.load(f)
+
+    splits = {
+        "train": np.load(p / "train_indices.npy"),
+        "val": np.load(p / "val_indices.npy"),
+        "test": np.load(p / "test_indices.npy"),
+    }
+
+    logger.info(
+        "Loaded cached data from %s — signals=%s, labels=%s",
+        processed_dir, signals.shape, labels.shape,
+    )
+    return signals, labels, label_classes, class_weights, splits
+
+
+def _is_cache_valid(processed_dir: str) -> bool:
+    """Check if all required cached files exist."""
+    p = Path(processed_dir)
+    required = [
+        "signals.npy", "labels.npy", "class_weights.npy",
+        "label_classes.json", "metadata.json",
+        "train_indices.npy", "val_indices.npy", "test_indices.npy",
+    ]
+    return all((p / f).exists() for f in required)
+
+
 def get_dataloaders(
     config: Dict[str, Any],
     max_samples: Optional[int] = None,
@@ -66,60 +113,66 @@ def get_dataloaders(
     """
     Build train/val/test DataLoaders from config.
 
-    End-to-end pipeline:
-    1. Load metadata and signals
-    2. Aggregate diagnostic labels
-    3. Encode labels as binary matrix
-    4. Preprocess signals
-    5. Split into train/val/test
-    6. Create DataLoaders
+    If preprocessed data exists in ``data/processed/``, loads from cache
+    (fast path). Otherwise falls back to loading raw data and
+    preprocessing on-the-fly.
 
     Args:
         config: Full configuration dictionary.
-        max_samples: If set, only load this many samples (for debugging).
+        max_samples: If set, only use this many samples (for debugging).
 
     Returns:
         Dictionary with keys ``"train"``, ``"val"``, ``"test"``, each
         mapping to a ``DataLoader``.
     """
-    from src.data.loader import load_metadata, load_raw_signals, load_scp_statements, aggregate_diagnostics
-    from src.data.preprocessing import preprocess_pipeline
-    from src.data.label_processing import encode_labels
-    from src.data.split import train_val_test_split
-
     data_cfg = config["data"]
-    split_cfg = config["split"]
     train_cfg = config["training"]
+    processed_dir = data_cfg.get("processed_dir", "data/processed")
 
-    # 1. Load metadata
-    metadata = load_metadata(data_cfg["raw_dir"])
+    # ── Try cached data first ────────────────────────────────
+    if max_samples is None and _is_cache_valid(processed_dir):
+        logger.info("Using cached preprocessed data from %s", processed_dir)
+        signals, label_matrix, label_classes, class_weights, splits = _load_from_cache(processed_dir)
+    else:
+        # ── Fallback: process from scratch ───────────────────
+        if max_samples is not None:
+            logger.info("max_samples=%d specified, processing from scratch", max_samples)
+        else:
+            logger.info(
+                "No cached data found at %s. Run 'python scripts/preprocess_data.py' "
+                "to preprocess and cache data for faster subsequent runs.",
+                processed_dir,
+            )
 
-    # 2. Load signals
-    signals = load_raw_signals(
-        metadata, data_cfg["raw_dir"],
-        sampling_rate=data_cfg["sampling_rate"],
-        max_samples=max_samples,
-    )
+        from src.data.loader import load_metadata, load_raw_signals, load_scp_statements, aggregate_diagnostics
+        from src.data.preprocessing import preprocess_pipeline
+        from src.data.label_processing import encode_labels
+        from src.data.split import train_val_test_split
 
-    if max_samples is not None:
-        metadata = metadata.iloc[:max_samples]
+        split_cfg = config["split"]
 
-    # 3. Aggregate and encode labels
-    scp_df = load_scp_statements(data_cfg["raw_dir"])
-    diag_labels = aggregate_diagnostics(metadata, scp_df, data_cfg["label_type"])
-    label_matrix, label_classes = encode_labels(diag_labels, label_type=data_cfg["label_type"])
+        metadata = load_metadata(data_cfg["raw_dir"])
+        signals = load_raw_signals(
+            metadata, data_cfg["raw_dir"],
+            sampling_rate=data_cfg["sampling_rate"],
+            max_samples=max_samples,
+        )
+        if max_samples is not None:
+            metadata = metadata.iloc[:max_samples]
 
-    # 4. Preprocess signals
-    signals = preprocess_pipeline(signals, config)
+        scp_df = load_scp_statements(data_cfg["raw_dir"])
+        diag_labels = aggregate_diagnostics(metadata, scp_df, data_cfg["label_type"])
+        label_matrix, label_classes = encode_labels(diag_labels, label_type=data_cfg["label_type"])
 
-    # 5. Split
-    splits = train_val_test_split(
-        metadata,
-        val_fold=split_cfg["val_fold"],
-        test_fold=split_cfg["test_fold"],
-    )
+        signals = preprocess_pipeline(signals, config)
 
-    # 6. Create DataLoaders
+        splits = train_val_test_split(
+            metadata,
+            val_fold=split_cfg["val_fold"],
+            test_fold=split_cfg["test_fold"],
+        )
+
+    # ── Build DataLoaders ────────────────────────────────────
     dataloaders = {}
     for split_name in ["train", "val", "test"]:
         idx = splits[split_name]
