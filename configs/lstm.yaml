@@ -36,29 +36,30 @@ model:
 
 training:
   epochs: 50
-  batch_size: 128
+  batch_size: 64
   learning_rate: 0.001
   weight_decay: 0.0001
-  loss: "weighted_bce"
+  loss: "asymmetric_focal"
   optimizer: "adamw"
   scheduler: "cosine"
   scheduler_params:
     T_max: 50
     eta_min: 0.00001
-  focal_loss_params:
-    alpha: 1.0
-    gamma: 2.0
-  amp: false                     # LSTM can have issues with AMP
+  asymmetric_focal_loss_params:
+    gamma_pos: 1.0
+    gamma_neg: 4.0
+    clip: 0.05
+  amp: true
   gradient_clip: 1.0
   num_workers: 4
   pin_memory: true
 
   early_stopping:
     enabled: true
-    monitor: "val_loss"
+    monitor: "val_f1_macro"
     patience: 10
-    min_delta: 0.001
-    mode: "min"
+    min_delta: 0.0001
+    mode: "max"
     restore_best_weights: true
 
 output:

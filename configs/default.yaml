@@ -36,7 +36,7 @@ training:
   batch_size: 128
   learning_rate: 0.001
   weight_decay: 0.0001
-  loss: "weighted_bce"          # weighted_bce | focal | asymmetric_focal
+  loss: "asymmetric_focal"      # weighted_bce | focal | asymmetric_focal
   optimizer: "adamw"              # adam | adamw | sgd
   scheduler: "cosine"           # cosine | step | plateau
   scheduler_params:
@@ -60,10 +60,10 @@ training:
 
   early_stopping:
     enabled: true
-    monitor: "val_loss"          # val_loss | val_f1_macro
+    monitor: "val_f1_macro"      # val_loss | val_f1_macro
     patience: 10
-    min_delta: 0.001             # minimum improvement to count as progress
-    mode: "min"                  # min (for loss) | max (for metrics like F1)
+    min_delta: 0.0001            # minimum improvement to count as progress
+    mode: "max"                  # min (for loss) | max (for metrics like F1)
     restore_best_weights: true
 
 output:

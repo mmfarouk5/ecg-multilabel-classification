@@ -52,21 +52,29 @@ def compute_metrics(
     metrics["subset_accuracy"] = accuracy_score(y_true, y_pred)
 
     # Sample-averaged metrics
-    metrics["f1_macro"] = f1_score(y_true, y_pred, average="macro", zero_division=0)
-    metrics["f1_micro"] = f1_score(y_true, y_pred, average="micro", zero_division=0)
-    metrics["f1_weighted"] = f1_score(y_true, y_pred, average="weighted", zero_division=0)
-    metrics["precision_macro"] = precision_score(y_true, y_pred, average="macro", zero_division=0)
-    metrics["recall_macro"] = recall_score(y_true, y_pred, average="macro", zero_division=0)
+    metrics["f1_macro"] = f1_score(
+        y_true, y_pred, average="macro", zero_division=0)
+    metrics["f1_micro"] = f1_score(
+        y_true, y_pred, average="micro", zero_division=0)
+    metrics["f1_weighted"] = f1_score(
+        y_true, y_pred, average="weighted", zero_division=0)
+    metrics["precision_macro"] = precision_score(
+        y_true, y_pred, average="macro", zero_division=0)
+    metrics["recall_macro"] = recall_score(
+        y_true, y_pred, average="macro", zero_division=0)
 
     # ROC-AUC (per-class, then macro)
     try:
-        metrics["roc_auc_macro"] = roc_auc_score(y_true, y_prob, average="macro")
-        metrics["roc_auc_weighted"] = roc_auc_score(y_true, y_prob, average="weighted")
+        metrics["roc_auc_macro"] = roc_auc_score(
+            y_true, y_prob, average="macro")
+        metrics["roc_auc_weighted"] = roc_auc_score(
+            y_true, y_prob, average="weighted")
 
         # Per-class ROC-AUC
         for i, cls_name in enumerate(label_classes):
             if y_true[:, i].sum() > 0:  # Only compute if positive samples exist
-                metrics[f"roc_auc_{cls_name}"] = roc_auc_score(y_true[:, i], y_prob[:, i])
+                metrics[f"roc_auc_{cls_name}"] = roc_auc_score(
+                    y_true[:, i], y_prob[:, i])
             else:
                 metrics[f"roc_auc_{cls_name}"] = float("nan")
     except ValueError as e:
@@ -87,7 +95,8 @@ def compute_metrics(
         metrics[f"f1_{cls_name}"] = per_class_f1[i]
 
     # Per-class Precision & Recall
-    per_class_prec = precision_score(y_true, y_pred, average=None, zero_division=0)
+    per_class_prec = precision_score(
+        y_true, y_pred, average=None, zero_division=0)
     per_class_rec = recall_score(y_true, y_pred, average=None, zero_division=0)
     for i, cls_name in enumerate(label_classes):
         metrics[f"precision_{cls_name}"] = per_class_prec[i]
@@ -115,7 +124,7 @@ def find_optimal_thresholds(
         - Best F1 scores per class ``(num_classes,)``.
     """
     if thresholds is None:
-        thresholds = np.arange(0.1, 0.9, 0.05)
+        thresholds = np.arange(0.05, 0.951, 0.01)
 
     num_classes = y_true.shape[1]
     best_thresholds = np.zeros(num_classes)
@@ -172,7 +181,8 @@ def format_metrics_table(
         prec = metrics.get(f"precision_{cls}", 0)
         rec = metrics.get(f"recall_{cls}", 0)
         auc = metrics.get(f"roc_auc_{cls}", 0)
-        lines.append(f"  {cls:<12} {f1:>8.4f} {prec:>10.4f} {rec:>8.4f} {auc:>9.4f}")
+        lines.append(
+            f"  {cls:<12} {f1:>8.4f} {prec:>10.4f} {rec:>8.4f} {auc:>9.4f}")
 
     lines.append("=" * 60)
     return "\n".join(lines)

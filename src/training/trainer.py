@@ -23,7 +23,7 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 from torch.utils.tensorboard import SummaryWriter
 
-from src.utils import get_device
+from src.utils import get_device, unwrap_model
 
 logger = logging.getLogger(__name__)
 
@@ -209,6 +209,7 @@ class Trainer:
         self.history = {
             "train_loss": [],
             "val_loss": [],
+            "val_f1_macro": [],
             "learning_rate": [],
         }
 
@@ -296,8 +297,22 @@ class Trainer:
         avg_loss = total_loss / max(n_batches, 1)
         result = {"val_loss": avg_loss}
         if collect_outputs and all_logits and all_labels:
-            result["logits"] = torch.cat(all_logits, dim=0)
-            result["labels"] = torch.cat(all_labels, dim=0)
+            logits_cat = torch.cat(all_logits, dim=0)
+            labels_cat = torch.cat(all_labels, dim=0)
+            result["logits"] = logits_cat
+            result["labels"] = labels_cat
+
+            # Compute F1 macro for early stopping
+            from sklearn.metrics import f1_score
+            from src.evaluation.metrics import find_optimal_thresholds
+
+            probs = torch.sigmoid(logits_cat).numpy()
+            labels_np = labels_cat.numpy()
+            thresholds, _ = find_optimal_thresholds(labels_np, probs)
+            preds = (probs >= thresholds).astype(float)
+            result["val_f1_macro"] = float(
+                f1_score(labels_np, preds, average="macro", zero_division=0)
+            )
         return result
 
     def fit(
@@ -365,6 +380,11 @@ class Trainer:
             self.history["val_loss"].append(val_loss)
             self.history["learning_rate"].append(current_lr)
 
+            # Compute and log val_f1_macro if available
+            val_f1 = val_results.get("val_f1_macro")
+            if val_f1 is not None:
+                self.history["val_f1_macro"].append(val_f1)
+
             # Determine monitored score for early stopping
             monitor_score = val_loss
             if self.es_monitor and self.es_monitor != "val_loss":
@@ -423,9 +443,11 @@ class Trainer:
             epoch: Current epoch.
             val_loss: Current validation loss.
         """
+        # Unwrap DataParallel if needed
+        model_to_save = unwrap_model(self.model)
         checkpoint = {
             "epoch": epoch,
-            "model_state_dict": self.model.state_dict(),
+            "model_state_dict": model_to_save.state_dict(),
             "optimizer_state_dict": self.optimizer.state_dict(),
             "val_loss": val_loss,
             "config": self.config,

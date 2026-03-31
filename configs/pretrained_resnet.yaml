@@ -53,12 +53,16 @@ training:
   batch_size: 64
   learning_rate: 0.0005
   weight_decay: 0.0001
-  loss: "weighted_bce"
+  loss: "asymmetric_focal"
   optimizer: "adamw"
   scheduler: "cosine"
   scheduler_params:
     T_max: 80
     eta_min: 0.000001
+  asymmetric_focal_loss_params:
+    gamma_pos: 1.0
+    gamma_neg: 4.0
+    clip: 0.05
   amp: true
   gradient_clip: 1.0
   num_workers: 4
@@ -66,10 +70,10 @@ training:
 
   early_stopping:
     enabled: true
-    monitor: "val_loss"
-    patience: 15
-    min_delta: 0.001
-    mode: "min"
+    monitor: "val_f1_macro"
+    patience: 10
+    min_delta: 0.0001
+    mode: "max"
     restore_best_weights: true
 
 output:
