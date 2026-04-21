@@ -12,7 +12,7 @@ import os
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 VENV_DIR = os.path.join(PROJECT_ROOT, ".venv")
 VENV_PYTHON = os.path.join(VENV_DIR, "bin", "python")
-REQUIRED_PACKAGES = ["torch", "numpy", "scipy", "pyyaml"]
+REQUIRED_PACKAGES = ["torch", "numpy", "scipy", "pyyaml", "wfdb"]
 PORT = 8000
 
 
