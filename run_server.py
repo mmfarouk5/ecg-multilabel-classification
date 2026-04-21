@@ -13,6 +13,8 @@ PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 VENV_DIR = os.path.join(PROJECT_ROOT, ".venv")
 VENV_PYTHON = os.path.join(VENV_DIR, "bin", "python")
 REQUIRED_PACKAGES = ["torch", "numpy", "scipy", "pyyaml", "wfdb"]
+# Map pip names → Python import names where they differ
+IMPORT_NAMES = {"pyyaml": "yaml"}
 PORT = 8000
 
 
@@ -28,9 +30,10 @@ def ensure_packages():
     """Install missing packages."""
     missing = []
     for pkg in REQUIRED_PACKAGES:
+        import_name = IMPORT_NAMES.get(pkg, pkg)
         try:
             subprocess.check_call(
-                [VENV_PYTHON, "-c", f"import {pkg}"],
+                [VENV_PYTHON, "-c", f"import {import_name}"],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )
