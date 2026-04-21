@@ -10,3 +10,6 @@ pyyaml>=6.0
 tensorboard>=2.13.0
 tqdm>=4.65.0
 iterative-stratification>=0.1.7
+fastapi>=0.100.0
+uvicorn[standard]>=0.23.0
+python-multipart>=0.0.6

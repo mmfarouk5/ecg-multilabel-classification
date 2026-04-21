@@ -1,11 +1,12 @@
 """
-ECG Diagnosis AI — Web Server
+ECG Diagnosis AI — FastAPI Web Server
 
-A lightweight web server for ECG multi-label classification using only
-the Python standard library (no FastAPI/Flask required). Uses the trained
-Leadwise CNN model to classify 12-lead ECG signals.
+A web server for ECG multi-label classification using FastAPI.
+Uses the trained Leadwise CNN model to classify 12-lead ECG signals.
 
 Usage:
+    uvicorn webapp.main:app --port 8000
+    # or
     python -m webapp.main [--port 8000]
 """
 
@@ -14,19 +15,17 @@ import csv
 import io
 import json
 import logging
-import mimetypes
-import os
 import random
 import sys
-from functools import lru_cache
-from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-from urllib.parse import urlparse, parse_qs
 
 import numpy as np
 import torch
 import yaml
+from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
 
 # ── Paths ──────────────────────────────────────────────────────
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -219,234 +218,155 @@ def parse_csv_signal(body: bytes) -> np.ndarray:
     return signal
 
 
-def parse_multipart(content_type: str, body: bytes):
-    """Minimal multipart/form-data parser to extract the file upload."""
-    boundary = None
-    for part in content_type.split(";"):
-        part = part.strip()
-        if part.startswith("boundary="):
-            boundary = part[len("boundary="):]
-            break
-    if not boundary:
-        raise ValueError("No boundary found in content-type")
-
-    boundary_bytes = ("--" + boundary).encode()
-    parts = body.split(boundary_bytes)
-
-    for part in parts:
-        if b"Content-Disposition" not in part:
-            continue
-        # Split headers from body
-        header_end = part.find(b"\r\n\r\n")
-        if header_end == -1:
-            continue
-        headers_raw = part[:header_end].decode("utf-8", errors="replace")
-        file_body = part[header_end + 4:]
-        # Remove trailing \r\n-- if present
-        if file_body.endswith(b"--\r\n"):
-            file_body = file_body[:-4]
-        elif file_body.endswith(b"\r\n"):
-            file_body = file_body[:-2]
-
-        if 'name="file"' in headers_raw or "filename=" in headers_raw:
-            return file_body
-
-    raise ValueError("No file part found in multipart upload")
+def _build_ground_truth(label):
+    """Build ground truth list from a label vector."""
+    ground_truth = []
+    for i, cls_name in enumerate(LABEL_CLASSES):
+        info = LABEL_DESCRIPTIONS[cls_name]
+        ground_truth.append({
+            "name": cls_name,
+            "full_name": info["full_name"],
+            "present": bool(label[i]),
+        })
+    return ground_truth
 
 
-# ── HTTP Handler ───────────────────────────────────────────────
-class ECGHandler(BaseHTTPRequestHandler):
-    """HTTP request handler for the ECG diagnosis API."""
+# ── FastAPI App ────────────────────────────────────────────────
+app = FastAPI(
+    title="ECG Diagnosis AI",
+    description="Multi-label ECG classification using deep learning",
+    version="1.0.0",
+)
 
-    def log_message(self, format, *args):
-        logger.info(format, *args)
-
-    def _send_json(self, data: dict, status: int = 200):
-        body = json.dumps(data, ensure_ascii=False).encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.end_headers()
-        self.wfile.write(body)
-
-    def _send_error_json(self, status: int, detail: str):
-        self._send_json({"detail": detail}, status)
-
-    def _serve_static(self, path: str):
-        """Serve a static file."""
-        if path == "/" or path == "":
-            file_path = STATIC_DIR / "index.html"
-        else:
-            # Remove leading slash
-            clean = path.lstrip("/")
-            # Remove /static/ prefix if present
-            if clean.startswith("static/"):
-                clean = clean[len("static/"):]
-            file_path = STATIC_DIR / clean
-
-        # Security: prevent directory traversal
-        try:
-            file_path = file_path.resolve()
-            if not str(file_path).startswith(str(STATIC_DIR.resolve())):
-                self.send_error(403)
-                return
-        except Exception:
-            self.send_error(403)
-            return
-
-        if not file_path.is_file():
-            self.send_error(404)
-            return
-
-        content_type, _ = mimetypes.guess_type(str(file_path))
-        content_type = content_type or "application/octet-stream"
-
-        body = file_path.read_bytes()
-        self.send_response(200)
-        self.send_header("Content-Type", content_type)
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "public, max-age=3600")
-        self.end_headers()
-        self.wfile.write(body)
-
-    def do_GET(self):
-        parsed = urlparse(self.path)
-        path = parsed.path
-
-        if path == "/api/health":
-            self._send_json({"status": "ok", "model_loaded": _model is not None})
-
-        elif path == "/api/model-info":
-            result = {
-                "current_model": "Leadwise CNN",
-                "label_classes": LABEL_CLASSES,
-                "label_details": LABEL_DESCRIPTIONS,
-                "lead_names": ECG_LEAD_NAMES,
-                "input_shape": {"timesteps": 1000, "leads": 12, "sampling_rate": 100},
-            }
-            if MODEL_COMPARISON_PATH.exists():
-                with open(MODEL_COMPARISON_PATH) as f:
-                    result["model_comparison"] = json.load(f)
-            self._send_json(result)
-
-        elif path == "/api/sample":
-            try:
-                signals, labels, test_indices = get_sample_data()
-            except Exception as e:
-                self._send_error_json(500, f"Could not load sample data: {e}")
-                return
-
-            idx = int(random.choice(test_indices))
-            signal = np.array(signals[idx]).astype(float)
-            label = labels[idx].tolist()
-
-            ground_truth = []
-            for i, cls_name in enumerate(LABEL_CLASSES):
-                info = LABEL_DESCRIPTIONS[cls_name]
-                ground_truth.append({
-                    "name": cls_name,
-                    "full_name": info["full_name"],
-                    "present": bool(label[i]),
-                })
-
-            self._send_json({
-                "signal": signal.tolist(),
-                "ground_truth": ground_truth,
-                "sample_index": idx,
-                "shape": list(signal.shape),
-            })
-
-        else:
-            self._serve_static(path)
-
-    def do_POST(self):
-        parsed = urlparse(self.path)
-        path = parsed.path
-
-        content_length = int(self.headers.get("Content-Length", 0))
-        body = self.rfile.read(content_length) if content_length > 0 else b""
-        content_type = self.headers.get("Content-Type", "")
-
-        if path == "/api/predict":
-            try:
-                if "multipart/form-data" in content_type:
-                    csv_bytes = parse_multipart(content_type, body)
-                else:
-                    csv_bytes = body
-
-                signal = parse_csv_signal(csv_bytes)
-                result = run_inference(signal)
-                result["signal"] = signal.tolist()
-                self._send_json(result)
-            except ValueError as e:
-                self._send_error_json(400, str(e))
-            except Exception as e:
-                logger.exception("Inference failed")
-                self._send_error_json(500, f"Inference error: {e}")
-
-        elif path == "/api/predict-sample":
-            try:
-                signals, labels, test_indices = get_sample_data()
-                idx = int(random.choice(test_indices))
-                signal = np.array(signals[idx]).astype(np.float32)
-                label = labels[idx].tolist()
-
-                result = run_inference(signal)
-
-                ground_truth = []
-                for i, cls_name in enumerate(LABEL_CLASSES):
-                    info = LABEL_DESCRIPTIONS[cls_name]
-                    ground_truth.append({
-                        "name": cls_name,
-                        "full_name": info["full_name"],
-                        "present": bool(label[i]),
-                    })
-
-                result["signal"] = signal.tolist()
-                result["ground_truth"] = ground_truth
-                result["sample_index"] = idx
-                self._send_json(result)
-            except Exception as e:
-                logger.exception("Sample prediction failed")
-                self._send_error_json(500, f"Sample prediction error: {e}")
-
-        else:
-            self._send_error_json(404, "Not found")
-
-    def do_OPTIONS(self):
-        self.send_response(204)
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
-        self.end_headers()
+# Mount static files
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
-# ── Main ───────────────────────────────────────────────────────
-def main():
-    parser = argparse.ArgumentParser(description="ECG Diagnosis AI — Web Server")
-    parser.add_argument("--port", type=int, default=8000, help="Port to serve on")
-    parser.add_argument("--host", type=str, default="localhost", help="Host to bind to")
-    args = parser.parse_args()
-
-    # Pre-load model on startup
+@app.on_event("startup")
+async def startup():
+    """Pre-load model and data on startup."""
     logger.info("Pre-loading model...")
     get_model()
     logger.info("Pre-loading sample data...")
     get_sample_data()
+    logger.info("=" * 50)
+    logger.info("  🫀 ECG Diagnosis AI Server — Ready")
+    logger.info("=" * 50)
 
-    server = HTTPServer((args.host, args.port), ECGHandler)
-    logger.info("=" * 50)
-    logger.info("  🫀 ECG Diagnosis AI Server")
-    logger.info("  http://localhost:%d", args.port)
-    logger.info("=" * 50)
+
+# ── Routes ─────────────────────────────────────────────────────
+@app.get("/", response_class=HTMLResponse)
+async def index():
+    """Serve the main frontend page."""
+    return HTMLResponse(content=(STATIC_DIR / "index.html").read_text())
+
+
+@app.get("/api/health")
+async def health():
+    """Health check."""
+    return {"status": "ok", "model_loaded": _model is not None}
+
+
+@app.get("/api/model-info")
+async def model_info():
+    """Return model comparison metrics and architecture details."""
+    result = {
+        "current_model": "Leadwise CNN",
+        "label_classes": LABEL_CLASSES,
+        "label_details": LABEL_DESCRIPTIONS,
+        "lead_names": ECG_LEAD_NAMES,
+        "input_shape": {"timesteps": 1000, "leads": 12, "sampling_rate": 100},
+    }
+    if MODEL_COMPARISON_PATH.exists():
+        with open(MODEL_COMPARISON_PATH) as f:
+            result["model_comparison"] = json.load(f)
+    return result
+
+
+@app.get("/api/sample")
+async def get_sample():
+    """Return a random test ECG sample with its ground truth labels."""
+    try:
+        signals, labels, test_indices = get_sample_data()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Could not load sample data: {e}")
+
+    idx = int(random.choice(test_indices))
+    signal = np.array(signals[idx]).astype(float)
+    label = labels[idx].tolist()
+
+    return {
+        "signal": signal.tolist(),
+        "ground_truth": _build_ground_truth(label),
+        "sample_index": idx,
+        "shape": list(signal.shape),
+    }
+
+
+@app.post("/api/predict")
+async def predict(file: UploadFile = File(...)):
+    """
+    Accept a CSV file with 12-lead ECG data and return predictions.
+
+    The CSV should have 1000 rows and 12 columns (no header).
+    """
+    if not file.filename.endswith(".csv"):
+        raise HTTPException(status_code=400, detail="Only CSV files are accepted.")
 
     try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        logger.info("Shutting down...")
-        server.shutdown()
+        content = await file.read()
+        signal = parse_csv_signal(content)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid CSV file: {e}")
+
+    try:
+        result = run_inference(signal)
+    except Exception as e:
+        logger.exception("Inference failed")
+        raise HTTPException(status_code=500, detail=f"Inference error: {e}")
+
+    result["signal"] = signal.tolist()
+    return result
 
 
+@app.post("/api/predict-sample")
+async def predict_sample():
+    """Get a random sample and predict on it (combined endpoint)."""
+    try:
+        signals, labels, test_indices = get_sample_data()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Could not load sample data: {e}")
+
+    idx = int(random.choice(test_indices))
+    signal = np.array(signals[idx]).astype(np.float32)
+    label = labels[idx].tolist()
+
+    try:
+        result = run_inference(signal)
+    except Exception as e:
+        logger.exception("Sample prediction failed")
+        raise HTTPException(status_code=500, detail=f"Sample prediction error: {e}")
+
+    result["signal"] = signal.tolist()
+    result["ground_truth"] = _build_ground_truth(label)
+    result["sample_index"] = idx
+    return result
+
+
+# ── CLI entry point ────────────────────────────────────────────
 if __name__ == "__main__":
-    main()
+    import uvicorn
+
+    parser = argparse.ArgumentParser(description="ECG Diagnosis AI — FastAPI Server")
+    parser.add_argument("--port", type=int, default=8000, help="Port to serve on")
+    parser.add_argument("--host", type=str, default="localhost", help="Host to bind to")
+    args = parser.parse_args()
+
+    uvicorn.run(
+        "webapp.main:app",
+        host=args.host,
+        port=args.port,
+        reload=False,
+    )

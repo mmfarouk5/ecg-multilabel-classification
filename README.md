@@ -154,7 +154,7 @@ The project includes an interactive **web application** for real-time ECG diagno
 - **Random Sample Mode** — Try real ECG recordings from the PTB-XL test set with ground truth comparison
 - **12-Lead ECG Visualization** — Clinical-style grid display of all leads rendered on HTML Canvas
 - **Diagnosis Results** — Per-class probability gauges with color-coded severity and clinical descriptions
-- **Zero Extra Dependencies** — Built with Python's standard library HTTP server (no Flask/FastAPI required)
+- **FastAPI Backend** — High-performance async API server with automatic OpenAPI docs at `/docs`
 
 ### Quick Start
 

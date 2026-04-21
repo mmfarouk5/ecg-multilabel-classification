@@ -12,9 +12,12 @@ import os
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 VENV_DIR = os.path.join(PROJECT_ROOT, ".venv")
 VENV_PYTHON = os.path.join(VENV_DIR, "bin", "python")
-REQUIRED_PACKAGES = ["torch", "numpy", "scipy", "pyyaml", "wfdb"]
+REQUIRED_PACKAGES = [
+    "torch", "numpy", "scipy", "pyyaml", "wfdb",
+    "fastapi", "uvicorn", "python-multipart",
+]
 # Map pip names → Python import names where they differ
-IMPORT_NAMES = {"pyyaml": "yaml"}
+IMPORT_NAMES = {"pyyaml": "yaml", "python-multipart": "multipart"}
 PORT = 8000
 
 
@@ -56,7 +59,7 @@ def main():
     ensure_venv()
     ensure_packages()
 
-    print(f"\n🚀 Starting server on http://localhost:{PORT}\n")
+    print(f"\n🚀 Starting FastAPI server on http://localhost:{PORT}\n")
 
     os.execv(
         VENV_PYTHON,
