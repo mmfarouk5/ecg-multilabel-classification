@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="AI-powered 12-lead ECG multi-label classification using deep learning. Upload your ECG signal and get instant cardiac diagnosis.">
+  <title>ECG Diagnosis AI — Multi-Label Cardiac Classification</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🫀</text></svg>">
+</head>
+<body>
+  <div class="bg-grid"></div>
+
+  <!-- Loading Overlay -->
+  <div class="loader-overlay" id="loader">
+    <div class="loader-spinner"></div>
+    <div class="loader-text" id="loader-text">Analyzing ECG signal...</div>
+  </div>
+
+  <!-- Toast -->
+  <div class="toast" id="toast"></div>
+
+  <!-- Hero -->
+  <header class="hero">
+    <div class="container">
+      <div class="hero-badge">
+        <span class="badge badge-accent">🫀 Powered by Deep Learning</span>
+      </div>
+
+      <h1>ECG Diagnosis AI</h1>
+      <p>Upload a 12-lead ECG signal and receive instant AI-powered cardiac diagnosis using our trained Leadwise CNN model.</p>
+
+      <div class="heartbeat-line">
+        <svg viewBox="0 0 280 40" preserveAspectRatio="none">
+          <path class="heartbeat-path" d="M0,20 L40,20 L55,20 L65,5 L75,35 L85,10 L95,25 L105,20 L140,20 L155,20 L165,5 L175,35 L185,10 L195,25 L205,20 L240,20 L255,20 L265,5 L275,35 L280,20"/>
+        </svg>
+      </div>
+
+      <div class="hero-stats">
+        <div class="hero-stat">
+          <div class="value">73.8%</div>
+          <div class="label">F1 Macro</div>
+        </div>
+        <div class="hero-stat">
+          <div class="value">91.7%</div>
+          <div class="label">ROC-AUC</div>
+        </div>
+        <div class="hero-stat">
+          <div class="value">12</div>
+          <div class="label">ECG Leads</div>
+        </div>
+        <div class="hero-stat">
+          <div class="value">5</div>
+          <div class="label">Diagnoses</div>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main class="container">
+
+    <!-- Upload Section -->
+    <section class="section" id="upload-section">
+      <div class="section-title">
+        <div class="icon">📤</div>
+        <span>Input ECG Signal</span>
+      </div>
+
+      <div class="upload-area">
+        <!-- Dropzone -->
+        <div class="upload-dropzone glass" id="dropzone">
+          <div class="upload-icon">📄</div>
+          <h3>Drag & Drop CSV File</h3>
+          <p>12-lead ECG signal • 1000 timesteps × 12 columns<br>10 seconds @ 100 Hz sampling rate</p>
+          <input type="file" id="file-input" accept=".csv" hidden>
+          <div class="file-info" id="file-info">
+            <span>✓</span>
+            <span id="file-name"></span>
+          </div>
+        </div>
+
+        <!-- Divider -->
+        <div class="upload-divider">OR</div>
+
+        <!-- Sample Button -->
+        <div class="sample-section">
+          <p>Try with a real ECG sample from the PTB-XL dataset</p>
+          <button class="btn btn-primary" id="btn-sample">
+            🎲 Try Random Sample
+          </button>
+          <div style="margin-top: 16px;">
+            <button class="btn btn-outline" id="btn-upload" style="display:none;">
+              🔬 Analyze Uploaded File
+            </button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ECG Visualization -->
+    <section class="section ecg-section" id="ecg-section">
+      <div class="section-title">
+        <div class="icon">📊</div>
+        <span>12-Lead ECG Signal</span>
+      </div>
+
+      <div class="ecg-grid" id="ecg-grid"></div>
+
+      <div class="ecg-strip glass" id="ecg-strip">
+        <div class="ecg-strip-label">Lead II — Full Strip</div>
+        <canvas id="ecg-strip-canvas" height="70"></canvas>
+      </div>
+    </section>
+
+    <!-- Diagnosis Results -->
+    <section class="section results-section" id="results-section">
+      <div class="section-title">
+        <div class="icon">🩺</div>
+        <span>Diagnosis Results</span>
+      </div>
+
+      <div class="results-summary glass" id="results-summary"></div>
+
+      <div class="results-grid" id="results-grid"></div>
+
+      <div class="ground-truth glass" id="ground-truth" style="display:none;"></div>
+    </section>
+
+  </main>
+
+  <!-- Footer -->
+  <footer class="footer">
+    <p>ECG Diagnosis AI · Leadwise CNN · PTB-XL Dataset · Built with FastAPI & PyTorch</p>
+    <p style="margin-top:4px;opacity:0.6">For research and educational purposes only — not for clinical use</p>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
