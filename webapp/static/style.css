@@ -291,34 +291,25 @@ body {
   width: 100%; height: 80px; display: block;
 }
 
-/* Full strip (Lead II) */
-.ecg-strip {
-  margin-top: 2px; background: var(--bg-secondary);
-  border-radius: 0 0 var(--radius) var(--radius);
-  padding: 8px 12px; position: relative;
-  border: 1px solid var(--border-color); border-top: none;
-}
-.ecg-strip canvas { width: 100%; height: 70px; display: block; }
-.ecg-strip-label {
-  position: absolute; top: 6px; left: 10px; z-index: 2;
-  font-family: var(--font-mono); font-size: 0.7rem;
-  font-weight: 600; color: var(--success); opacity: 0.9;
-  background: rgba(6,9,24,0.7); padding: 2px 6px; border-radius: 4px;
-}
+
 
 /* ── Results ────────────────────────────────────────────── */
 .results-section { display: none; }
 .results-section.visible { display: block; }
 
 .results-summary {
-  padding: 20px 24px; margin-bottom: 20px;
+  padding: 24px; margin-bottom: 20px;
+  display: flex; flex-direction: column; gap: 16px;
+}
+
+.results-summary .summary-header {
   display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
 }
 
 .results-summary .summary-icon {
   width: 48px; height: 48px; border-radius: 50%;
   display: flex; align-items: center; justify-content: center;
-  font-size: 1.5rem;
+  font-size: 1.5rem; flex-shrink: 0;
 }
 
 .results-summary .summary-text h3 {
@@ -327,6 +318,52 @@ body {
 
 .results-summary .summary-text p {
   font-size: 0.85rem; color: var(--text-secondary);
+}
+
+/* Detected findings list */
+.summary-findings {
+  border-top: 1px solid var(--border-color);
+  padding-top: 14px;
+}
+
+.summary-findings-title {
+  font-size: 0.7rem; font-weight: 600; text-transform: uppercase;
+  letter-spacing: 1px; color: var(--text-muted); margin-bottom: 10px;
+}
+
+.summary-finding {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.04);
+}
+.summary-finding:last-child { border-bottom: none; }
+
+.summary-finding-dot {
+  width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+}
+
+.summary-finding-name {
+  font-size: 0.9rem; font-weight: 500; flex: 1;
+}
+
+.summary-finding-prob {
+  font-family: var(--font-mono); font-size: 0.85rem; font-weight: 700;
+}
+
+/* Clinical interpretation */
+.summary-interpretation {
+  font-size: 0.82rem; color: var(--text-secondary); line-height: 1.65;
+  border-top: 1px solid var(--border-color); padding-top: 14px;
+}
+.summary-interpretation strong {
+  color: var(--text-primary);
+}
+
+/* Disclaimer */
+.summary-disclaimer {
+  font-size: 0.72rem; color: var(--text-muted);
+  background: rgba(255,255,255,0.02); border-radius: var(--radius-sm);
+  padding: 10px 14px; line-height: 1.5;
+  border: 1px solid rgba(255,255,255,0.04);
 }
 
 .results-grid {

@@ -13,7 +13,7 @@
   const $btnUpload = document.getElementById("btn-upload");
   const $ecgSection = document.getElementById("ecg-section");
   const $ecgGrid = document.getElementById("ecg-grid");
-  const $ecgStripCanvas = document.getElementById("ecg-strip-canvas");
+
   const $resultsSection = document.getElementById("results-section");
   const $resultsSummary = document.getElementById("results-summary");
   const $resultsGrid = document.getElementById("results-grid");
@@ -109,25 +109,92 @@
     // Render ECG
     if (data.signal) renderECG(data.signal);
 
-    // Summary
+    // ── Build interpretable summary ──────────────────────
     const nPred = data.num_predicted;
     const predicted = data.predicted_classes;
-    let summaryColor, summaryIcon, summaryMsg;
-    if (nPred === 0 || (nPred === 1 && predicted[0] === "Normal ECG")) {
-      summaryColor = "var(--success)"; summaryIcon = "✅";
-      summaryMsg = "Normal ECG — No abnormalities detected";
+    const detected = data.classes.filter((c) => c.predicted);
+    const hasCritical = detected.some((c) => c.severity === "critical");
+    const hasWarning  = detected.some((c) => c.severity === "warning");
+    const isNormal = nPred === 0 || (nPred === 1 && predicted[0] === "Normal ECG");
+
+    // Determine top-level verdict
+    let summaryColor, summaryIcon, summaryTitle, summarySubtitle;
+    if (isNormal) {
+      summaryColor = "var(--success)";
+      summaryIcon = "✅";
+      summaryTitle = "Normal ECG";
+      summarySubtitle = "No significant cardiac abnormalities were detected by the model.";
+    } else if (hasCritical) {
+      summaryColor = "var(--danger)";
+      summaryIcon = "🚨";
+      summaryTitle = "Critical Finding";
+      summarySubtitle = "The model detected at least one critical cardiac condition that warrants urgent clinical review.";
     } else {
-      summaryColor = "var(--warning)"; summaryIcon = "⚠️";
-      summaryMsg = nPred + " condition" + (nPred > 1 ? "s" : "") + " detected: " + predicted.join(", ");
+      summaryColor = "var(--warning)";
+      summaryIcon = "⚠️";
+      summaryTitle = "Abnormalities Detected";
+      summarySubtitle = "The model detected cardiac abnormalities that may require further clinical evaluation.";
+    }
+
+    // Build detected-findings breakdown
+    let findingsHTML = "";
+    if (!isNormal) {
+      const findingItems = detected
+        .filter((c) => c.name !== "NORM")
+        .sort((a, b) => b.probability - a.probability)
+        .map((c) => {
+          const pct = (c.probability * 100).toFixed(1);
+          let sevLabel = "Warning";
+          let sevClass = "badge-warning";
+          if (c.severity === "critical") { sevLabel = "Critical"; sevClass = "badge-danger"; }
+          return `<div class="summary-finding">
+            <span class="summary-finding-dot" style="background:${c.color}"></span>
+            <span class="summary-finding-name">${c.full_name}</span>
+            <span class="badge ${sevClass}" style="font-size:0.6rem;padding:2px 8px">${sevLabel}</span>
+            <span class="summary-finding-prob" style="color:${c.color}">${pct}%</span>
+          </div>`;
+        })
+        .join("");
+
+      findingsHTML = `<div class="summary-findings">
+        <div class="summary-findings-title">Detected Conditions (probability ≥ 50%)</div>
+        ${findingItems}
+      </div>`;
+    }
+
+    // Clinical interpretation
+    let interpretationHTML = "";
+    if (isNormal) {
+      interpretationHTML = `<div class="summary-interpretation">
+        <strong>Interpretation:</strong> The ECG signal appears within normal limits. All five diagnostic categories scored below the detection threshold, or only the Normal class was activated.
+      </div>`;
+    } else {
+      const names = detected.filter((c) => c.name !== "NORM").map((c) => c.full_name);
+      const highest = detected.filter((c) => c.name !== "NORM").sort((a, b) => b.probability - a.probability)[0];
+      let interp = `The model identified <strong>${names.join(", ")}</strong> in this ECG recording.`;
+      interp += ` The highest-confidence finding is <strong>${highest.full_name}</strong> at <strong>${(highest.probability * 100).toFixed(1)}%</strong>.`;
+      if (hasCritical) {
+        interp += ` <span style="color:var(--danger)">Critical findings such as Myocardial Infarction require immediate clinical attention.</span>`;
+      }
+      interpretationHTML = `<div class="summary-interpretation">
+        <strong>Interpretation:</strong> ${interp}
+      </div>`;
     }
 
     $resultsSummary.innerHTML = `
-      <div class="summary-icon" style="background:${summaryColor}22;color:${summaryColor}">
-        ${summaryIcon}
+      <div class="summary-header">
+        <div class="summary-icon" style="background:${summaryColor}22;color:${summaryColor}">
+          ${summaryIcon}
+        </div>
+        <div class="summary-text">
+          <h3 style="color:${summaryColor}">${summaryTitle}</h3>
+          <p>${summarySubtitle}</p>
+        </div>
       </div>
-      <div class="summary-text">
-        <h3 style="color:${summaryColor}">${nPred === 0 ? "Normal ECG" : "Abnormalities Detected"}</h3>
-        <p>${summaryMsg}</p>
+      ${findingsHTML}
+      ${interpretationHTML}
+      <div class="summary-disclaimer">
+        ⚕️ This is an AI-assisted screening tool for research purposes only. Results must be validated by a qualified clinician before any clinical decision is made.
       </div>`;
 
     // Cards
@@ -196,9 +263,6 @@
       const canvas = div.querySelector("canvas");
       drawLeadSignal(canvas, signal, leadIdx, "rgba(0,212,255,0.85)");
     });
-
-    // Full strip — Lead II
-    drawLeadSignal($ecgStripCanvas, signal, 1, "rgba(0,230,118,0.85)");
   }
 
   function drawLeadSignal(canvas, signal, leadIdx, color) {
