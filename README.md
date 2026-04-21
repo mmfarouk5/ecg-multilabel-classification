@@ -9,6 +9,7 @@ A deep learning framework for automated multi-label classification of 12-lead el
 - [Models](#models)
 - [Experimental Results](#experimental-results)
 - [Key Findings](#key-findings)
+- [Web Application](#web-application)
 - [Project Structure](#project-structure)
 - [Installation](#installation)
 - [Usage](#usage)
@@ -143,6 +144,63 @@ Interestingly, simpler architectures (CNN, Leadwise CNN, BiLSTM) outperformed mo
 ### 4. Per-Class Threshold Optimization is Critical
 Using a fine-grained threshold search (0.01 steps from 0.05 to 0.95) for each class improved F1 scores compared to using a fixed 0.5 threshold.
 
+## Web Application
+
+The project includes an interactive **web application** for real-time ECG diagnosis. Upload a 12-lead ECG signal or try a random sample from the PTB-XL dataset, and the AI will predict cardiac conditions instantly.
+
+### Features
+
+- **Drag & Drop CSV Upload** — Upload a 12-lead ECG signal (1000 timesteps × 12 columns at 100 Hz)
+- **Random Sample Mode** — Try real ECG recordings from the PTB-XL test set with ground truth comparison
+- **12-Lead ECG Visualization** — Clinical-style grid display of all leads rendered on HTML Canvas
+- **Diagnosis Results** — Per-class probability gauges with color-coded severity and clinical descriptions
+- **Zero Extra Dependencies** — Built with Python's standard library HTTP server (no Flask/FastAPI required)
+
+### Quick Start
+
+```bash
+# One-command launcher (creates venv, installs deps, starts server)
+python3 run_server.py
+
+# Then open in browser
+open http://localhost:8000
+```
+
+Or manually:
+
+```bash
+source .venv/bin/activate
+python -m webapp.main --port 8000
+```
+
+### API Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/` | Serves the web UI |
+| `GET` | `/api/health` | Health check |
+| `GET` | `/api/model-info` | Model details and comparison metrics |
+| `GET` | `/api/sample` | Random PTB-XL test sample with ground truth |
+| `POST` | `/api/predict` | Upload CSV file → get predictions |
+| `POST` | `/api/predict-sample` | Random sample + instant inference |
+
+### CSV Format
+
+The uploaded CSV file should contain:
+- **1000 rows** (10 seconds at 100 Hz sampling rate)
+- **12 columns** (one per ECG lead: I, II, III, aVR, aVL, aVF, V1–V6)
+- **No header row** — numeric values only
+
+### Diagnostic Classes
+
+| Class | Condition | Severity |
+|-------|-----------|----------|
+| **NORM** | Normal ECG | ✅ Normal |
+| **MI** | Myocardial Infarction | 🔴 Critical |
+| **STTC** | ST/T Changes | 🟡 Warning |
+| **CD** | Conduction Disturbance | 🟡 Warning |
+| **HYP** | Hypertrophy | 🟡 Warning |
+
 ## Project Structure
 
 ```
@@ -174,7 +232,14 @@ ecg-multilabel-classification/
 │   ├── evaluation/            # Metrics and evaluation
 │   ├── inference/             # Model inference
 │   └── utils/                 # Utilities and helpers
+├── webapp/                     # Web application
+│   ├── main.py                # HTTP server with API endpoints
+│   └── static/                # Frontend assets
+│       ├── index.html         # Single-page application
+│       ├── style.css          # Premium dark medical theme
+│       └── app.js             # Frontend logic & ECG rendering
 ├── scripts/                   # Training and evaluation scripts
+├── run_server.py              # One-click web app launcher
 ├── requirements.txt
 └── README.md
 ```
@@ -211,6 +276,15 @@ wget -r -N -c -np https://physionet.org/files/ptb-xl/1.0.1/
 ```
 
 ## Usage
+
+### Web Application (Recommended)
+
+```bash
+# One-command launcher
+python3 run_server.py
+
+# Open http://localhost:8000 in your browser
+```
 
 ### Training a Model
 
