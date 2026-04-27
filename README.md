@@ -114,13 +114,27 @@ python scripts/run_all_models.py
 python scripts/run_ablation.py --config configs/default.yaml
 ```
 
-### 5. Run cross-validation
+### 5. Run top-model ensemble (leadwise_cnn + cnn_1d + lstm)
+
+```bash
+python scripts/run_ensemble.py --models leadwise_cnn cnn_1d lstm
+```
+
+> Requires checkpoints at `outputs/models/best_<model>.pt` for each selected model.
+
+### 6. Run Bayesian hyperparameter tuning (Optuna TPE)
+
+```bash
+python scripts/run_bayesian_tuning.py --config configs/leadwise_cnn.yaml --n-trials 30
+```
+
+### 7. Run cross-validation
 
 ```bash
 python scripts/run_cv.py --config configs/leadwise_cnn.yaml
 ```
 
-### 6. Launch web app
+### 8. Launch web app
 
 ```bash
 python run_server.py
@@ -128,7 +142,7 @@ python run_server.py
 
 Then open: `http://localhost:8000`
 
-### 7. Programmatic inference
+### 9. Programmatic inference
 
 ```python
 import numpy as np
