@@ -7,6 +7,8 @@ Downloads the PTB-XL dataset from PhysioNet if not already present.
 from pathlib import Path
 import logging
 
+from src.utils import resolve_writable_dir
+
 logger = logging.getLogger(__name__)
 
 
@@ -22,9 +24,10 @@ def download_ptbxl(data_dir: str = "data/raw") -> Path:
     """
     import wfdb
 
-    data_path = Path(data_dir)
+    data_path = resolve_writable_dir(data_dir)
     # Check for the expected dataset folder
-    expected = data_path / "ptb-xl-a-large-publicly-available-electrocardiography-dataset-1.0.1"
+    expected = data_path / \
+        "ptb-xl-a-large-publicly-available-electrocardiography-dataset-1.0.1"
 
     if expected.exists():
         logger.info("PTB-XL dataset already exists at %s", expected)

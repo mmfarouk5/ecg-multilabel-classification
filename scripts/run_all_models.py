@@ -10,16 +10,6 @@ Usage:
     python scripts/run_all_models.py --max-samples 1000  # For debugging
 """
 
-from src.data.label_processing import compute_class_weights, encode_labels
-from src.data.loader import load_metadata, load_scp_statements, aggregate_diagnostics
-from src.data.dataset import get_dataloaders, _is_cache_valid
-from src.evaluation.evaluator import Evaluator
-from src.training.trainer import Trainer
-from src.training.scheduler import build_scheduler
-from src.training.optimizer import build_optimizer
-from src.training.loss import build_loss
-from src.models import build_model
-from src.utils import get_device
 import argparse
 import gc
 import json
@@ -37,6 +27,17 @@ import yaml
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
+
+from src.data.dataset import get_dataloaders, _is_cache_valid
+from src.data.label_processing import compute_class_weights, encode_labels
+from src.data.loader import load_metadata, load_scp_statements, aggregate_diagnostics
+from src.evaluation.evaluator import Evaluator
+from src.models import build_model
+from src.training.loss import build_loss
+from src.training.optimizer import build_optimizer
+from src.training.scheduler import build_scheduler
+from src.training.trainer import Trainer
+from src.utils import get_device, resolve_runtime_paths
 
 
 logger = logging.getLogger(__name__)
@@ -73,7 +74,8 @@ def load_config(model_name: str) -> dict:
             "Config for %s not found, using default.yaml", model_name)
 
     with open(config_path) as f:
-        return yaml.safe_load(f)
+        config = yaml.safe_load(f)
+    return resolve_runtime_paths(config, project_root=PROJECT_ROOT, logger=logger)
 
 
 def train_single_model(

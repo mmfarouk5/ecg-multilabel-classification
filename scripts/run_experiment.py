@@ -5,18 +5,6 @@ End-to-end script that trains a model and runs evaluation,
 producing all outputs (models, logs, figures, metrics).
 """
 
-from src.utils import get_device
-from src.evaluation.confusion_matrix import plot_confusion_matrices, plot_multilabel_confusion_summary
-from src.evaluation.plots import plot_roc_curves, plot_training_history, plot_precision_recall_curves
-from src.evaluation.evaluator import Evaluator
-from src.training.trainer import Trainer
-from src.training.scheduler import build_scheduler
-from src.training.optimizer import build_optimizer
-from src.training.loss import build_loss
-from src.models import build_model
-from src.data.loader import load_metadata, load_raw_signals, load_scp_statements, aggregate_diagnostics
-from src.data.label_processing import compute_class_weights, encode_labels, get_label_classes
-from src.data.dataset import get_dataloaders, _is_cache_valid, _load_from_cache
 import argparse
 import json
 import logging
@@ -32,6 +20,19 @@ import yaml
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
+
+from src.data.dataset import get_dataloaders, _is_cache_valid, _load_from_cache
+from src.data.label_processing import compute_class_weights, encode_labels, get_label_classes
+from src.data.loader import load_metadata, load_raw_signals, load_scp_statements, aggregate_diagnostics
+from src.evaluation.confusion_matrix import plot_confusion_matrices, plot_multilabel_confusion_summary
+from src.evaluation.evaluator import Evaluator
+from src.evaluation.plots import plot_roc_curves, plot_training_history, plot_precision_recall_curves
+from src.models import build_model
+from src.training.loss import build_loss
+from src.training.optimizer import build_optimizer
+from src.training.scheduler import build_scheduler
+from src.training.trainer import Trainer
+from src.utils import get_device, resolve_runtime_paths
 
 
 logger = logging.getLogger(__name__)
@@ -61,6 +62,8 @@ def run_experiment(config_path: str, max_samples: int = None) -> dict:
     """
     with open(config_path) as f:
         config = yaml.safe_load(f)
+    config = resolve_runtime_paths(
+        config, project_root=PROJECT_ROOT, logger=logger)
 
     seed = config.get("experiment", {}).get("seed", 42)
     deterministic = config.get("experiment", {}).get("deterministic", True)

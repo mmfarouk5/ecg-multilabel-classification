@@ -26,10 +26,12 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from src.data.label_processing import encode_labels, get_label_classes, compute_class_weights
 from src.data.loader import load_metadata, load_raw_signals, load_scp_statements, aggregate_diagnostics
 from src.data.preprocessing import preprocess_pipeline
-from src.data.label_processing import encode_labels, get_label_classes, compute_class_weights
 from src.data.split import train_val_test_split
+from src.utils import resolve_runtime_paths
+
 
 logging.basicConfig(
     level=logging.INFO,
@@ -57,6 +59,8 @@ def preprocess_and_save(config_path: str) -> None:
     """
     with open(config_path) as f:
         config = yaml.safe_load(f)
+    config = resolve_runtime_paths(
+        config, project_root=PROJECT_ROOT, logger=logger)
 
     data_cfg = config["data"]
     split_cfg = config["split"]
@@ -85,14 +89,17 @@ def preprocess_and_save(config_path: str) -> None:
     # ── 4. Labels ────────────────────────────────────────────
     logger.info("Step 4/5: Encoding labels...")
     scp_df = load_scp_statements(data_cfg["raw_dir"])
-    diag_labels = aggregate_diagnostics(metadata, scp_df, data_cfg["label_type"])
-    label_matrix, label_classes = encode_labels(diag_labels, label_type=data_cfg["label_type"])
+    diag_labels = aggregate_diagnostics(
+        metadata, scp_df, data_cfg["label_type"])
+    label_matrix, label_classes = encode_labels(
+        diag_labels, label_type=data_cfg["label_type"])
     class_weights = compute_class_weights(label_matrix)
 
     # Label distribution
     for i, cls in enumerate(label_classes):
         count = int(label_matrix[:, i].sum())
-        logger.info("  → %s: %d samples (%.1f%%)", cls, count, count / len(label_matrix) * 100)
+        logger.info("  → %s: %d samples (%.1f%%)", cls,
+                    count, count / len(label_matrix) * 100)
 
     # ── 5. Splits ────────────────────────────────────────────
     logger.info("Step 5/5: Computing splits...")
@@ -141,7 +148,8 @@ def preprocess_and_save(config_path: str) -> None:
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Preprocess PTB-XL data and save to disk")
+    parser = argparse.ArgumentParser(
+        description="Preprocess PTB-XL data and save to disk")
     parser.add_argument("--config", type=str, default="configs/default.yaml",
                         help="Config file (only data/preprocessing/split sections are used)")
     args = parser.parse_args()

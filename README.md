@@ -88,6 +88,18 @@ python -m src.data.download
 
 Option B: download manually from PhysioNet and place it under `data/raw/`.
 
+### Kaggle path compatibility
+
+Training/evaluation scripts now resolve paths automatically for Kaggle:
+
+- Raw PTB-XL data is auto-detected from `/kaggle/input/...`
+- Writable artifacts are directed to `/kaggle/working/...`
+
+Optional overrides:
+
+- `PTBXL_DATA_DIR` for dataset root
+- `ECG_CHECKPOINT_PATH`, `ECG_PROCESSED_DIR`, `ECG_MODEL_COMPARISON_PATH` for web app assets
+
 ## Usage Examples
 
 ### 1. Preprocess and cache dataset

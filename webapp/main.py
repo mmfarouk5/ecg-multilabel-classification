@@ -10,11 +10,13 @@ Usage:
     python -m webapp.main [--port 8000]
 """
 
+from src.utils import resolve_runtime_paths
 import argparse
 import csv
 import io
 import json
 import logging
+import os
 import random
 import sys
 from pathlib import Path
@@ -31,10 +33,6 @@ from fastapi.staticfiles import StaticFiles
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 WEBAPP_DIR = Path(__file__).resolve().parent
 STATIC_DIR = WEBAPP_DIR / "static"
-CONFIG_PATH = PROJECT_ROOT / "configs" / "leadwise_cnn.yaml"
-CHECKPOINT_PATH = PROJECT_ROOT / "outputs" / "models" / "best_leadwise_cnn.pt"
-PROCESSED_DIR = PROJECT_ROOT / "data" / "processed"
-MODEL_COMPARISON_PATH = PROJECT_ROOT / "outputs" / "model_comparison.json"
 
 # Add project root to path for imports
 sys.path.insert(0, str(PROJECT_ROOT))
@@ -46,6 +44,44 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 logger = logging.getLogger(__name__)
+
+
+def _pick_path(env_var: str, candidates: List[Path]) -> Path:
+    env_value = os.getenv(env_var)
+    if env_value:
+        return Path(env_value).expanduser()
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return candidates[0]
+
+
+CONFIG_PATH = _pick_path(
+    "ECG_CONFIG_PATH",
+    [PROJECT_ROOT / "configs" / "leadwise_cnn.yaml"],
+)
+CHECKPOINT_PATH = _pick_path(
+    "ECG_CHECKPOINT_PATH",
+    [
+        PROJECT_ROOT / "outputs" / "models" / "best_leadwise_cnn.pt",
+        Path("/kaggle/working/outputs/models/best_leadwise_cnn.pt"),
+    ],
+)
+PROCESSED_DIR = _pick_path(
+    "ECG_PROCESSED_DIR",
+    [
+        PROJECT_ROOT / "data" / "processed",
+        Path("/kaggle/working/data/processed"),
+    ],
+)
+MODEL_COMPARISON_PATH = _pick_path(
+    "ECG_MODEL_COMPARISON_PATH",
+    [
+        PROJECT_ROOT / "outputs" / "results" / "model_comparison.json",
+        PROJECT_ROOT / "outputs" / "model_comparison.json",
+        Path("/kaggle/working/outputs/results/model_comparison.json"),
+    ],
+)
 
 # ── Label definitions ──────────────────────────────────────────
 LABEL_CLASSES = ["NORM", "MI", "STTC", "CD", "HYP"]
@@ -98,6 +134,8 @@ def get_config() -> Dict[str, Any]:
     if _config is None:
         with open(CONFIG_PATH, "r") as f:
             _config = yaml.safe_load(f)
+        _config = resolve_runtime_paths(
+            _config, project_root=PROJECT_ROOT, logger=logger)
     return _config
 
 
@@ -122,7 +160,8 @@ def get_model():
     state_dict = checkpoint["model_state_dict"]
     remapped = {}
     for k, v in state_dict.items():
-        new_key = k.replace("backbone.", "lead_backbone.", 1) if k.startswith("backbone.") else k
+        new_key = k.replace("backbone.", "lead_backbone.",
+                            1) if k.startswith("backbone.") else k
         remapped[new_key] = v
 
     model.load_state_dict(remapped)
@@ -144,7 +183,8 @@ def get_sample_data():
     _labels = np.load(str(PROCESSED_DIR / "labels.npy"))
     _test_indices = np.load(str(PROCESSED_DIR / "test_indices.npy"))
     logger.info(
-        "✓ Loaded %d signals, %d test indices", len(_signals), len(_test_indices)
+        "✓ Loaded %d signals, %d test indices", len(
+            _signals), len(_test_indices)
     )
     return _signals, _labels, _test_indices
 
@@ -161,7 +201,8 @@ def run_inference(signal: np.ndarray) -> Dict[str, Any]:
     batch = signal[np.newaxis, ...].astype(np.float32)
     batch = preprocess_pipeline(batch, config)
 
-    tensor = torch.tensor(batch, dtype=torch.float32).permute(0, 2, 1).to(device)
+    tensor = torch.tensor(batch, dtype=torch.float32).permute(
+        0, 2, 1).to(device)
     logits = model(tensor)
     probs = torch.sigmoid(logits).cpu().numpy()[0]
     preds = (probs >= 0.5).astype(int)
@@ -204,7 +245,8 @@ def parse_csv_signal(body: bytes) -> np.ndarray:
 
     signal = np.array(rows, dtype=np.float32)
     if signal.shape[1] != 12:
-        raise ValueError(f"Expected 12 columns (leads), got {signal.shape[1]}.")
+        raise ValueError(
+            f"Expected 12 columns (leads), got {signal.shape[1]}.")
     if signal.shape[0] < 100:
         raise ValueError(
             f"Signal too short. Expected ~1000 timesteps, got {signal.shape[0]}."
@@ -289,7 +331,8 @@ async def get_sample():
     try:
         signals, labels, test_indices = get_sample_data()
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Could not load sample data: {e}")
+        raise HTTPException(
+            status_code=500, detail=f"Could not load sample data: {e}")
 
     idx = int(random.choice(test_indices))
     signal = np.array(signals[idx]).astype(float)
@@ -311,7 +354,8 @@ async def predict(file: UploadFile = File(...)):
     The CSV should have 1000 rows and 12 columns (no header).
     """
     if not file.filename.endswith(".csv"):
-        raise HTTPException(status_code=400, detail="Only CSV files are accepted.")
+        raise HTTPException(
+            status_code=400, detail="Only CSV files are accepted.")
 
     try:
         content = await file.read()
@@ -337,7 +381,8 @@ async def predict_sample():
     try:
         signals, labels, test_indices = get_sample_data()
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Could not load sample data: {e}")
+        raise HTTPException(
+            status_code=500, detail=f"Could not load sample data: {e}")
 
     idx = int(random.choice(test_indices))
     signal = np.array(signals[idx]).astype(np.float32)
@@ -347,7 +392,8 @@ async def predict_sample():
         result = run_inference(signal)
     except Exception as e:
         logger.exception("Sample prediction failed")
-        raise HTTPException(status_code=500, detail=f"Sample prediction error: {e}")
+        raise HTTPException(
+            status_code=500, detail=f"Sample prediction error: {e}")
 
     result["signal"] = signal.tolist()
     result["ground_truth"] = _build_ground_truth(label)
@@ -359,9 +405,12 @@ async def predict_sample():
 if __name__ == "__main__":
     import uvicorn
 
-    parser = argparse.ArgumentParser(description="ECG Diagnosis AI — FastAPI Server")
-    parser.add_argument("--port", type=int, default=8000, help="Port to serve on")
-    parser.add_argument("--host", type=str, default="localhost", help="Host to bind to")
+    parser = argparse.ArgumentParser(
+        description="ECG Diagnosis AI — FastAPI Server")
+    parser.add_argument("--port", type=int, default=8000,
+                        help="Port to serve on")
+    parser.add_argument("--host", type=str,
+                        default="localhost", help="Host to bind to")
     args = parser.parse_args()
 
     uvicorn.run(

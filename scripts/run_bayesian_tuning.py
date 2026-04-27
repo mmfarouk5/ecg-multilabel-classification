@@ -39,7 +39,7 @@ from src.training.loss import build_loss
 from src.training.optimizer import build_optimizer
 from src.training.scheduler import build_scheduler
 from src.training.trainer import Trainer
-from src.utils import get_device
+from src.utils import get_device, resolve_runtime_paths
 
 
 logger = logging.getLogger(__name__)
@@ -57,7 +57,8 @@ def set_seed(seed: int, deterministic: bool = True) -> None:
 
 def _load_config(config_path: str) -> Dict[str, Any]:
     with open(config_path) as f:
-        return yaml.safe_load(f)
+        config = yaml.safe_load(f)
+    return resolve_runtime_paths(config, project_root=PROJECT_ROOT, logger=logger)
 
 
 def _load_class_weights(config: Dict[str, Any], device: torch.device, max_samples: int | None) -> torch.Tensor:

@@ -10,7 +10,6 @@ Usage:
     python scripts/run_ablation.py --max-samples 2000
 """
 
-from scripts.run_experiment import run_experiment
 import argparse
 import copy
 import csv
@@ -27,6 +26,8 @@ import yaml
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
+
+from scripts.run_experiment import run_experiment
 
 
 logger = logging.getLogger(__name__)

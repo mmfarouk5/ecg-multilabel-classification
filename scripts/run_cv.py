@@ -21,6 +21,8 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.training.cross_validation import run_cross_validation
+from src.utils import resolve_runtime_paths
+
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +46,8 @@ def main(config_path: str, max_samples: int = None):
     """
     with open(config_path) as f:
         config = yaml.safe_load(f)
+    config = resolve_runtime_paths(
+        config, project_root=PROJECT_ROOT, logger=logger)
 
     seed = config.get("experiment", {}).get("seed", 42)
     set_seed(seed)

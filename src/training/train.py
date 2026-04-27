@@ -28,7 +28,8 @@ from src.training.loss import build_loss
 from src.training.optimizer import build_optimizer
 from src.training.scheduler import build_scheduler
 from src.training.trainer import Trainer
-from src.utils import get_device
+from src.utils import get_device, resolve_runtime_paths
+
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +59,8 @@ def train(config_path: str, max_samples: int = None) -> dict:
     # Load config
     with open(config_path) as f:
         config = yaml.safe_load(f)
+    config = resolve_runtime_paths(
+        config, project_root=PROJECT_ROOT, logger=logger)
 
     # Setup
     seed = config.get("experiment", {}).get("seed", 42)
@@ -77,7 +80,8 @@ def train(config_path: str, max_samples: int = None) -> dict:
     # Load class weights — from cache if available, else compute
     processed_dir = config["data"].get("processed_dir", "data/processed")
     if max_samples is None and _is_cache_valid(processed_dir):
-        class_weights = torch.tensor(np.load(Path(processed_dir) / "class_weights.npy")).to(device)
+        class_weights = torch.tensor(
+            np.load(Path(processed_dir) / "class_weights.npy")).to(device)
         logger.info("Loaded class weights from cache")
     else:
         data_dir = config["data"]["raw_dir"]
@@ -85,14 +89,18 @@ def train(config_path: str, max_samples: int = None) -> dict:
         if max_samples:
             metadata = metadata.iloc[:max_samples]
         scp_df = load_scp_statements(data_dir)
-        diag_labels = aggregate_diagnostics(metadata, scp_df, config["data"]["label_type"])
-        label_matrix, _ = encode_labels(diag_labels, label_type=config["data"]["label_type"])
-        class_weights = torch.tensor(compute_class_weights(label_matrix)).to(device)
+        diag_labels = aggregate_diagnostics(
+            metadata, scp_df, config["data"]["label_type"])
+        label_matrix, _ = encode_labels(
+            diag_labels, label_type=config["data"]["label_type"])
+        class_weights = torch.tensor(
+            compute_class_weights(label_matrix)).to(device)
 
     # Model
     model = build_model(config)
     total_params = sum(p.numel() for p in model.parameters())
-    logger.info("Model: %s | Parameters: %s", config["model"]["name"], f"{total_params:,}")
+    logger.info("Model: %s | Parameters: %s",
+                config["model"]["name"], f"{total_params:,}")
 
     # Loss, Optimizer, Scheduler
     criterion = build_loss(config, class_weights=class_weights)
@@ -103,7 +111,8 @@ def train(config_path: str, max_samples: int = None) -> dict:
     writer = None
     if config.get("experiment", {}).get("use_tensorboard", False):
         from torch.utils.tensorboard import SummaryWriter
-        log_dir = Path(config["output"]["logs_dir"]) / config["experiment"].get("name", "default")
+        log_dir = Path(config["output"]["logs_dir"]) / \
+            config["experiment"].get("name", "default")
         writer = SummaryWriter(log_dir=str(log_dir))
         logger.info("TensorBoard logging to %s", log_dir)
 
@@ -131,7 +140,8 @@ def train(config_path: str, max_samples: int = None) -> dict:
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Train ECG classification model")
+    parser = argparse.ArgumentParser(
+        description="Train ECG classification model")
     parser.add_argument(
         "--config", type=str, default="configs/default.yaml",
         help="Path to YAML config file",

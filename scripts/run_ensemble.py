@@ -32,7 +32,7 @@ from src.data.loader import aggregate_diagnostics, load_metadata, load_scp_state
 from src.evaluation.evaluator import Evaluator
 from src.evaluation.metrics import compute_metrics, find_optimal_thresholds
 from src.models import build_model
-from src.utils import get_device
+from src.utils import get_device, resolve_runtime_paths
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +41,8 @@ DEFAULT_MODELS = ["leadwise_cnn", "cnn_1d", "lstm"]
 
 def _load_yaml(path: Path) -> Dict[str, Any]:
     with open(path) as f:
-        return yaml.safe_load(f)
+        config = yaml.safe_load(f)
+    return resolve_runtime_paths(config, project_root=PROJECT_ROOT, logger=logger)
 
 
 def _load_model_config(model_name: str, fallback_config: Dict[str, Any]) -> Dict[str, Any]:
