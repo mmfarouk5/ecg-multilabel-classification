@@ -32,7 +32,7 @@ from src.training.loss import build_loss
 from src.training.optimizer import build_optimizer
 from src.training.scheduler import build_scheduler
 from src.training.trainer import Trainer
-from src.utils import get_device, resolve_runtime_paths
+from src.utils import get_device, resolve_runtime_paths, zip_output_directories
 
 
 logger = logging.getLogger(__name__)
@@ -49,13 +49,18 @@ def set_seed(seed: int, deterministic: bool = True) -> None:
         torch.backends.cudnn.benchmark = not deterministic
 
 
-def run_experiment(config_path: str, max_samples: int = None) -> dict:
+def run_experiment(
+    config_path: str,
+    max_samples: int = None,
+    create_archives: bool = True,
+) -> dict:
     """
     Run a full experiment: train + evaluate + generate outputs.
 
     Args:
         config_path: Path to YAML config file.
         max_samples: Limit samples for debugging.
+        create_archives: If True, create zip archives for output folders.
 
     Returns:
         Dictionary with training history and evaluation metrics.
@@ -196,11 +201,21 @@ def run_experiment(config_path: str, max_samples: int = None) -> dict:
     logger.info("EXPERIMENT COMPLETE: %s / %s", exp_name, model_name)
     logger.info("  Results: %s", results_dir)
     logger.info("  Figures: %s", figures_dir)
+
+    archives = {}
+    if create_archives:
+        archives = zip_output_directories(config["output"])
+        if archives:
+            logger.info("  Archives:")
+            for key, archive_path in archives.items():
+                logger.info("    %s -> %s", key, archive_path)
+
     logger.info("=" * 60)
 
     return {
         "history": history,
         "metrics": test_results["metrics"],
+        "archives": {k: str(v) for k, v in archives.items()},
     }
 
 

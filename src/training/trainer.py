@@ -23,7 +23,7 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 from torch.utils.tensorboard import SummaryWriter
 
-from src.utils import get_device, unwrap_model
+from src.utils import get_device, prune_checkpoint_files, unwrap_model
 
 logger = logging.getLogger(__name__)
 
@@ -427,6 +427,17 @@ class Trainer:
             self.models_dir / f"final_{model_name}.pt",
             epoch, val_loss,
         )
+
+        removed = prune_checkpoint_files(
+            self.models_dir,
+            keep_patterns=("best_*.pt",),
+        )
+        if removed:
+            logger.info(
+                "Removed %d non-best checkpoint(s) from %s",
+                len(removed),
+                self.models_dir,
+            )
 
         logger.info("Training complete. Best val loss: %.4f",
                     self.best_val_loss)

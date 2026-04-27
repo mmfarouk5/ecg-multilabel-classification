@@ -37,7 +37,7 @@ from src.training.loss import build_loss
 from src.training.optimizer import build_optimizer
 from src.training.scheduler import build_scheduler
 from src.training.trainer import Trainer
-from src.utils import get_device, resolve_runtime_paths
+from src.utils import get_device, resolve_runtime_paths, zip_output_directories
 
 
 logger = logging.getLogger(__name__)
@@ -316,6 +316,12 @@ def run_all_models(
     logger.info("  FINISHED %d/%d MODELS",
                 len(successful_results), len(models))
     logger.info("=" * 80)
+
+    archives = zip_output_directories(base_config["output"])
+    if archives:
+        logger.info("Created output archives:")
+        for key, archive_path in archives.items():
+            logger.info("  %s -> %s", key, archive_path)
 
     return all_results
 

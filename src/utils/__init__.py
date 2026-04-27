@@ -13,6 +13,11 @@ from src.utils.paths import (
     resolve_writable_dir,
     running_on_kaggle,
 )
+from src.utils.artifacts import (
+    make_zip_archive,
+    prune_checkpoint_files,
+    zip_output_directories,
+)
 
 
 def get_device() -> torch.device:
@@ -90,4 +95,7 @@ __all__ = [
     "resolve_runtime_paths",
     "resolve_writable_dir",
     "running_on_kaggle",
+    "prune_checkpoint_files",
+    "make_zip_archive",
+    "zip_output_directories",
 ]

@@ -28,7 +28,7 @@ from src.training.loss import build_loss
 from src.training.optimizer import build_optimizer
 from src.training.scheduler import build_scheduler
 from src.training.trainer import Trainer
-from src.utils import get_device, resolve_runtime_paths
+from src.utils import get_device, resolve_runtime_paths, zip_output_directories
 
 
 logger = logging.getLogger(__name__)
@@ -135,6 +135,12 @@ def train(config_path: str, max_samples: int = None) -> dict:
 
     if writer:
         writer.close()
+
+    archives = zip_output_directories(config["output"])
+    if archives:
+        logger.info("Created output archives:")
+        for key, archive_path in archives.items():
+            logger.info("  %s -> %s", key, archive_path)
 
     return history
 

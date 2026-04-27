@@ -172,7 +172,11 @@ def main(config_path: str, models: List[str], max_samples: int | None = None) ->
             tmp_cfg_path = _write_temp_config(run_cfg)
             logger.info("Running model=%s | ablation=%s",
                         model_name, variant["name"])
-            result = run_experiment(tmp_cfg_path, max_samples=max_samples)
+            result = run_experiment(
+                tmp_cfg_path,
+                max_samples=max_samples,
+                create_archives=False,
+            )
             metrics = result.get("metrics", {})
 
             all_rows.append(
