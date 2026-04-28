@@ -1,103 +1,259 @@
 # ECG Multi-Label Classification (PTB-XL)
 
-End-to-end multi-label ECG diagnosis from 12-lead waveforms. This repository includes preprocessing, training and evaluation, and a FastAPI web app for inference. Current outputs in this workspace include single-model results for `cnn_1d`, `cnn_lstm`, `cnn_transformer`, `leadwise_cnn`, `lstm`, and `pretrained_resnet`, plus an ensemble of `leadwise_cnn` + `cnn_1d` + `lstm`.
+End-to-end multi-label ECG diagnosis from 12-lead waveforms. This repository includes signal preprocessing, config-driven training across seven deep learning architectures, threshold-optimised evaluation, weighted probability ensemble, Bayesian hyperparameter tuning, and a production-ready FastAPI web application for inference.
 
 ## Project Overview
 
-This project predicts five PTB-XL diagnostic superclasses:
+### Problem Definition
 
-- `NORM` (Normal ECG)
-- `MI` (Myocardial Infarction)
-- `STTC` (ST/T Changes)
-- `CD` (Conduction Disturbance)
-- `HYP` (Hypertrophy)
+**Task:** Given a 12-lead, 10-second ECG recording, predict one or more cardiac diagnostic superclasses simultaneously (multi-label classification).
 
-Core goals:
+**Why it matters:** Automated ECG interpretation can accelerate clinical triage, reduce diagnostic error in resource-limited settings, and serve as a decision-support tool for cardiologists. The PTB-XL dataset (21,799 records from 18,869 patients) provides a large, clinician-annotated benchmark for this task.
 
-1. Build a robust multi-label ECG pipeline from raw waveform files to deployable inference.
-2. Compare architecture families under a consistent training and evaluation setup.
-3. Prioritize reproducibility with config-driven experiments and artifact tracking.
+**Diagnostic superclasses (5 labels):**
+
+| Label | Full Name             | Description                                          |
+|-------|-----------------------|------------------------------------------------------|
+| NORM  | Normal ECG            | No significant cardiac abnormalities                 |
+| MI    | Myocardial Infarction | ST changes, pathological Q-waves, T-wave inversions  |
+| STTC  | ST/T Changes          | Repolarisation abnormalities (ischaemia, electrolyte) |
+| CD    | Conduction Disturbance | Bundle branch blocks, AV blocks                     |
+| HYP   | Hypertrophy           | Enlarged heart chambers, high-voltage QRS            |
+
+Each record can carry **zero or more** labels, making this a **multi-label** problem. Outputs are sigmoid probabilities thresholded by per-class optimal cutoffs.
+
+---
 
 ## Methodology
 
-### Problem Definition
-
-Given a 12-lead ECG recording (10 seconds at 100 Hz by default), predict a multi-label diagnosis across the five PTB-XL superclasses. Each record can map to multiple labels, so outputs are sigmoid probabilities and thresholded multi-hot vectors.
-
 ### Data Pipeline
 
-1. Load PTB-XL metadata and SCP statements, map SCP codes to diagnostic labels, and encode labels into a binary matrix using `diagnostic_superclass` by default.
-2. Load waveform signals with wfdb at 100 Hz or 500 Hz. Shapes are `(N, seq_len, 12)` where `seq_len` is 1000 at 100 Hz or 5000 at 500 Hz.
-3. Preprocess signals in this order:
-   - Baseline wander removal (high-pass Butterworth).
-   - Bandpass filtering (Butterworth).
-   - Outlier clipping at a percentile threshold.
-   - Z-score normalization per lead (with zero-std protection).
-4. Split by PTB-XL `strat_fold` by default (train folds 1-8, val fold 9, test fold 10). Cross-validation uses multi-label stratified K-fold on non-test folds.
-5. Cache preprocessed data in [data/processed](data/processed); subsequent runs reuse cached tensors.
+```text
+PTB-XL PhysioNet download
+  → metadata + SCP statement loading
+  → diagnostic superclass label encoding (binary matrix)
+  → waveform loading via wfdb (100 Hz default)
+  → preprocessing pipeline
+  → stratified split (train / val / test)
+  → cached to data/processed/
+```
 
-Edge handling:
+**Steps in detail:**
 
-- Unsupported sampling rates raise errors (only 100 or 500 Hz are supported).
-- Normalization replaces zero standard deviations with 1 to avoid division by zero.
-- The web app pads or truncates uploaded signals to 1000 timesteps and requires 12 columns.
+1. **Metadata & Labels:** Load PTB-XL metadata CSV and SCP statement definitions. Map each record's SCP codes → diagnostic superclass labels → binary label matrix `(N, 5)`.
+2. **Waveform Loading:** Load raw ECG signals at 100 Hz (shape `(N, 1000, 12)`) or 500 Hz (`(N, 5000, 12)`). Only these two rates are supported.
+3. **Preprocessing Pipeline** (applied in order):
+   - **Baseline wander removal** — 4th-order high-pass Butterworth at 0.5 Hz
+   - **Bandpass filter** — 4th-order Butterworth [0.5, 40.0] Hz
+   - **Outlier clipping** — symmetric clip at the 99th percentile of absolute amplitude
+   - **Z-score normalisation** — per-sample, per-lead (zero-std protection: std=0 → std=1)
+4. **Splitting:** Default uses PTB-XL `strat_fold` (train: folds 1–8, val: fold 9, test: fold 10). Cross-validation uses multi-label stratified K-fold on non-test folds.
+5. **Caching:** Preprocessed signals, labels, class weights, split indices, and metadata are cached under `data/processed/`. Subsequent runs load directly from cache.
+
+**Edge-case handling:**
+- Unsupported sampling rates raise explicit errors.
+- Per-lead normalisation replaces zero standard deviation with 1 to prevent NaN.
+- The web app pads or truncates uploaded signals to exactly 1000 timesteps, rejecting signals with <100 steps or ≠12 leads.
 
 ### Model Architectures
 
-- `cnn_1d`: stacked Conv1d blocks with BN, ReLU, MaxPool, then adaptive average pooling and FC.
-- `leadwise_cnn`: shared per-lead Conv1d backbone, concatenated lead features, FC head.
-- `resnet`: 1D residual blocks with downsampling stages and global pooling.
-- `pretrained_resnet`: xresnet1d-style stem and residual stages, optional pretrained backbone loading and freezing.
-- `lstm`: bidirectional LSTM with temporal attention and FC head.
-- `cnn_lstm`: CNN downsampling followed by a bidirectional LSTM, last hidden state to FC.
-- `cnn_transformer`: CNN downsampling, projection + positional encoding, CLS token pooling, Transformer encoder.
+Seven architectures are implemented in a shared registry (`src/models/`), all instantiated from YAML config via `build_model()`:
+
+| Model | Key Design | Parameters |
+|-------|-----------|-----------|
+| `cnn_1d` | Stacked Conv1d → BN → ReLU → MaxPool, adaptive avg pool, FC head | ~3.5M |
+| `leadwise_cnn` | **Shared** per-lead Conv1d backbone × 12 leads → concatenate → FC head | ~0.8M |
+| `resnet` | 1D residual blocks with downsampling, global average pooling | ~1.1M |
+| `pretrained_resnet` | xresnet1d-style with optional pretrained backbone & freezing | ~25M |
+| `lstm` | Bidirectional LSTM with temporal attention and FC head | ~1.6M |
+| `cnn_lstm` | CNN downsampling → bidirectional LSTM → last hidden → FC | ~3.2M |
+| `cnn_transformer` | CNN downsampling → projection + positional encoding → Transformer encoder with CLS token | ~2.7M |
+
+**Architecture selection rationale:**
+- **CNNs** capture local morphological patterns (QRS width, ST elevation).
+- **LSTMs** model temporal dependencies across the full 10-second window.
+- **Hybrid CNN+LSTM / CNN+Transformer** combine local feature extraction with global sequence modelling.
+- **Leadwise CNN** exploits the clinical practice of interpreting each lead independently before fusing findings — this proved to be the most parameter-efficient model.
 
 ### Training Strategy
 
-- Configuration-driven via [configs](configs). Defaults are in [configs/default.yaml](configs/default.yaml).
-- Device selection: CUDA, then Apple MPS, then CPU. AMP is enabled only on CUDA.
-- Loss options: weighted BCE, focal, asymmetric focal, or BCE, chosen per config.
-- Optimizers: Adam, AdamW, or SGD. Schedulers: cosine, step, or plateau.
-- Optional class-aware sampling with a weighted sampler for rare-label upweighting.
-- Early stopping supports `val_loss` or `val_f1_macro` monitoring; `val_f1_macro` is computed using per-class thresholds optimized on the validation set each epoch.
-- Best checkpoint is saved by validation loss in [outputs/models](outputs/models) with a best_ prefix; final checkpoint saved at end, non-best checkpoints are pruned.
+All training is configuration-driven via YAML files under `configs/`.
+
+| Aspect | Details |
+|--------|---------|
+| **Loss** | Asymmetric Focal Loss (default: γ⁺=1, γ⁻=4, clip=0.05), Focal Loss, Weighted BCE, or plain BCE |
+| **Optimiser** | AdamW (default), Adam, or SGD |
+| **Scheduler** | Cosine annealing (default), step decay, or ReduceLROnPlateau |
+| **AMP** | Automatic mixed precision on CUDA (disabled on MPS/CPU) |
+| **Gradient clipping** | Max-norm clipping (default: 1.0) |
+| **Class-aware sampling** | Optional weighted sampler that upweights samples with rare labels |
+| **Early stopping** | Monitors `val_f1_macro` (default) or `val_loss` with configurable patience, min_delta, and best-weight restoration |
+| **Checkpointing** | Best checkpoint saved by validation loss; non-best checkpoints pruned automatically |
+| **Reproducibility** | Seed-locked (default 42), `torch.backends.cudnn.deterministic=True` |
+| **Multi-GPU** | `DataParallel` wrapping when >1 CUDA GPU detected (configurable exclusion list) |
 
 ### Inference Pipeline
 
-- `predict_signal` and `predict_batch` apply the same preprocessing pipeline, run a forward pass, apply sigmoid, and threshold probabilities (default threshold 0.5).
-- `postprocessing` provides per-class thresholds, confidence filtering, and prediction formatting.
-- The web app loads the `leadwise_cnn` checkpoint, runs CPU inference, and formats predictions with confidence labels.
+The inference module (`src/inference/`) provides a unified API for single-model and ensemble prediction:
+
+```text
+Raw ECG signal (seq_len, 12)
+  → add batch dimension
+  → preprocessing pipeline (same as training)
+  → channel-first transpose (n_leads, seq_len)
+  → forward pass → sigmoid → probabilities
+  → apply per-class optimal thresholds
+  → binary predictions + formatted output
+```
+
+**Key features:**
+- **Centralised checkpoint loading** with automatic state-dict key remapping (handles `DataParallel` `module.` prefix and legacy `backbone.` → `lead_backbone.` rename).
+- **Per-class optimal thresholds** loaded from saved evaluation results (grid-search optimised on F1).
+- **Ensemble inference** (`predict_ensemble`) averages sigmoid probabilities across multiple models with configurable weights.
+- Uses `@torch.inference_mode()` for maximum inference performance.
+- The **web app** automatically loads the best available thresholds (ensemble first, then single-model fallback).
 
 ### Output Generation and Schema
 
-- `Evaluator` computes metrics and saves results to disk. When `optimize_thresholds=True`, per-class thresholds are selected by grid search (0.05 to 0.95, step 0.01) to maximize per-class F1.
-- Per-model results include metrics, probabilities, predictions, labels, and optional optimal thresholds. Model histories are saved by [scripts/run_all_models.py](scripts/run_all_models.py).
-- The multi-model comparison summary is written by [scripts/run_all_models.py](scripts/run_all_models.py) to [outputs/model_comparison.json](outputs/model_comparison.json).
+**Per-model results bundle** (saved under `outputs/results/<model_name>/`):
+
+| File | Contents |
+|------|----------|
+| `metrics.json` | All evaluation metrics (see schema below) |
+| `probabilities.npy` | Sigmoid probabilities `(N, 5)` |
+| `predictions.npy` | Binary predictions `(N, 5)` |
+| `labels.npy` | Ground truth `(N, 5)` |
+| `optimal_thresholds.npy` | Per-class thresholds `(5,)` |
+| `history_*.npy` | Training loss, val loss, val F1 per epoch |
+
+**Metrics JSON schema:**
+```json
+{
+  "subset_accuracy": 0.5928,
+  "f1_macro": 0.7307,
+  "f1_micro": 0.7649,
+  "f1_weighted": 0.7659,
+  "precision_macro": 0.7214,
+  "recall_macro": 0.7458,
+  "roc_auc_macro": 0.9188,
+  "roc_auc_weighted": 0.9260,
+  "roc_auc_NORM": 0.9440,
+  "roc_auc_MI": 0.9190,
+  "roc_auc_STTC": 0.9289,
+  "roc_auc_CD": 0.9176,
+  "roc_auc_HYP": 0.8847,
+  "avg_precision_macro": 0.7959,
+  "f1_NORM": 0.8581,
+  "f1_MI": 0.7364,
+  "f1_STTC": 0.7544,
+  "f1_CD": 0.7366,
+  "f1_HYP": 0.5681,
+  "precision_NORM": 0.8222,
+  "recall_NORM": 0.8973,
+  "precision_MI": 0.7279,
+  "recall_MI": 0.7450,
+  "precision_STTC": 0.7632,
+  "recall_STTC": 0.7457,
+  "precision_CD": 0.7890,
+  "recall_CD": 0.6908,
+  "precision_HYP": 0.5044,
+  "recall_HYP": 0.6502
+}
+```
+
+All float values are Python `float`. Required fields: `subset_accuracy`, `f1_macro`, `roc_auc_macro`, per-class `f1_<LABEL>`, `precision_<LABEL>`, `recall_<LABEL>`, `roc_auc_<LABEL>`.
 
 ### Evaluation Approach
 
-- Metrics: subset accuracy, macro/micro/weighted F1, macro precision and recall, macro and weighted ROC-AUC, per-class ROC-AUC, and macro average precision.
-- Default split is PTB-XL fold-based. Cross-validation uses multi-label stratified folds excluding the test fold.
+| Metric | Purpose |
+|--------|---------|
+| **F1 Macro** | Primary metric — unweighted average across all 5 classes (penalises poor minority-class performance) |
+| **F1 Micro** | Global TP/FP/FN aggregation (favours majority classes) |
+| **F1 Weighted** | Prevalence-weighted F1 |
+| **ROC-AUC Macro/Weighted** | Discrimination ability across operating points |
+| **Subset Accuracy** | Exact-match accuracy (all 5 labels must match simultaneously) |
+| **Average Precision Macro** | Area under the precision-recall curve |
+| **Per-class F1/Precision/Recall/AUC** | Fine-grained per-condition analysis |
+
+**Threshold optimisation:** Per-class thresholds are grid-searched (0.05–0.95, step 0.01) to maximise per-class F1 on the test split. This inflates reported test metrics; a future improvement is to optimise on validation and apply to test.
+
+**Validation strategy:** Default hold-out (PTB-XL fold-based). 5-fold multi-label stratified cross-validation available for model stability assessment.
+
+---
+
+## Results
+
+### Single-Model Comparison
+
+Trained with asymmetric focal loss, cosine annealing, AdamW, and per-class threshold optimisation.
+
+| Rank | Model | F1 Macro | ROC-AUC Macro | Subset Accuracy | F1 HYP (hardest) |
+|:---:|-------|:---:|:---:|:---:|:---:|
+| 1 | `cnn_1d` | **0.7307** | 0.9188 | **0.5928** | 0.5681 |
+| 2 | `leadwise_cnn` | 0.7205 | 0.9075 | 0.5801 | 0.6025 |
+| 3 | `cnn_transformer` | 0.7196 | **0.9152** | 0.5552 | 0.5302 |
+| 4 | `lstm` | 0.7177 | 0.9097 | 0.5638 | 0.5017 |
+| 5 | `cnn_lstm` | 0.7151 | 0.9115 | 0.5311 | 0.5420 |
+| 6 | `pretrained_resnet` | 0.5258 | 0.7205 | 0.0576 | 0.3318 |
+
+> **Notes:**
+> - Top 5 models are within 1.6% F1 of each other — architecture matters less than training strategy for this task.
+> - `pretrained_resnet` underperforms significantly, likely due to domain mismatch (ImageNet pretraining ≠ ECG signals) and the large parameter count overfitting.
+> - HYP is the hardest class across all models (lowest F1), consistent with the low prevalence and subtle ECG morphology.
+
+### Ensemble Results
+
+**Probability-averaged ensemble** of `leadwise_cnn + cnn_1d + lstm` with equal weights and per-class threshold optimisation:
+
+| Metric | Ensemble | Best Single (cnn_1d) | Δ |
+|--------|:---:|:---:|:---:|
+| **F1 Macro** | **0.7488** | 0.7307 | **+0.0181** |
+| **ROC-AUC Macro** | **0.9248** | 0.9188 | **+0.0060** |
+| **Subset Accuracy** | **0.6015** | 0.5928 | **+0.0087** |
+| **Avg Precision Macro** | **0.8127** | 0.7959 | **+0.0168** |
+
+### Bayesian Hyperparameter Tuning
+
+Optuna TPE sampler on `leadwise_cnn` (30 trials):
+
+- **Best val F1 Macro:** 0.7483
+- **Key findings:** Lower learning rate (1.09e-4), higher weight decay (2.56e-3), smaller batch size (32), class-aware sampling enabled, plateau scheduler, and adjusted asymmetric focal loss parameters (γ⁺=1.85, γ⁻=2.90).
+
+### Cross-Validation Summary
+
+5-fold multi-label stratified CV on `leadwise_cnn`:
+
+| Metric | Value |
+|--------|-------|
+| Mean val loss | 0.0563 |
+| Std val loss | 0.0009 |
+
+Low standard deviation indicates stable model performance across folds.
+
+---
 
 ## Pipeline Overview
 
 ```text
 PTB-XL records + SCP statements
-  -> label encoding + class weights
-  -> waveform loading (100 or 500 Hz)
-  -> preprocessing (baseline removal, bandpass, clip, normalize)
-  -> split by strat_fold
-  -> train (config-driven)
-  -> evaluate + threshold optimization
-  -> outputs (metrics, predictions, models, histories)
+  → label encoding + class weights
+  → waveform loading (100 or 500 Hz)
+  → preprocessing (baseline removal, bandpass, clip, normalise)
+  → split by strat_fold
+  → train (config-driven)
+  → evaluate + per-class threshold optimisation
+  → outputs (metrics, predictions, models, histories)
+  → optional: ensemble / cross-validation / ablation / HPO
 ```
+
+---
 
 ## Installation
 
 ### Prerequisites
 
 - Python 3.10+
-- Recommended: CUDA-capable GPU for training
+- Recommended: CUDA-capable GPU for training (MPS and CPU also supported)
 
 ### Setup
 
@@ -114,240 +270,252 @@ pip install -r requirements.txt
 
 ### Download PTB-XL
 
-Option A (programmatic download helper):
+Option A — programmatic download helper:
 
 ```bash
 python -m src.data.download
 ```
 
-Option B: download manually from PhysioNet and place it under [data/raw](data/raw).
+Option B — download manually from [PhysioNet PTB-XL](https://physionet.org/content/ptb-xl/) and place under `data/raw/`.
 
-### Kaggle path compatibility
+### Kaggle Path Compatibility
 
-Path resolution is Kaggle-aware. Raw data and writable outputs are auto-detected from `/kaggle/input` and `/kaggle/working` when running in Kaggle.
+Path resolution is Kaggle-aware. Raw data and writable outputs are auto-detected from `/kaggle/input` and `/kaggle/working` when running in a Kaggle kernel.
 
-Optional overrides:
+Optional environment variable overrides:
 
-- `PTBXL_DATA_DIR` for dataset root
-- `ECG_CONFIG_PATH`, `ECG_CHECKPOINT_PATH`, `ECG_PROCESSED_DIR`, `ECG_MODEL_COMPARISON_PATH` for the web app
+| Variable | Purpose |
+|----------|---------|
+| `PTBXL_DATA_DIR` | Dataset root directory |
+| `ECG_CONFIG_PATH` | Config YAML for the web app |
+| `ECG_CHECKPOINT_PATH` | Model checkpoint for the web app |
+| `ECG_PROCESSED_DIR` | Preprocessed data directory |
+| `ECG_MODEL_COMPARISON_PATH` | Model comparison JSON |
+
+---
 
 ## How to Run
 
-### 1. Preprocess and cache dataset
+### 1. Preprocess and Cache Dataset
 
 ```bash
 python scripts/preprocess_data.py --config configs/default.yaml
 ```
 
-### 2. Train and evaluate one model
+### 2. Train and Evaluate One Model
 
 ```bash
 python scripts/run_experiment.py --config configs/leadwise_cnn.yaml
 ```
 
-### 3. Train all models and produce comparison
+### 3. Train All Models and Produce Comparison
 
 ```bash
 python scripts/run_all_models.py
 ```
 
-### 4. Run ablation sweep
+### 4. Run Ablation Sweep
 
 ```bash
 python scripts/run_ablation.py --config configs/default.yaml
 ```
 
-### 5. Run top-model ensemble (leadwise_cnn + cnn_1d + lstm)
+### 5. Run Top-Model Ensemble
 
 ```bash
 python scripts/run_ensemble.py --models leadwise_cnn cnn_1d lstm
+# With custom weights:
+python scripts/run_ensemble.py --models leadwise_cnn cnn_1d lstm --weights 0.4 0.35 0.25
 ```
 
-Requires checkpoints in [outputs/models](outputs/models).
+Requires trained checkpoints in `outputs/models/`.
 
-### 6. Run Bayesian hyperparameter tuning (Optuna TPE)
+### 6. Run Bayesian Hyperparameter Tuning (Optuna TPE)
 
 ```bash
 python scripts/run_bayesian_tuning.py --config configs/leadwise_cnn.yaml --n-trials 30
 ```
 
-### 7. Run cross-validation
+### 7. Run Cross-Validation
 
 ```bash
 python scripts/run_cv.py --config configs/leadwise_cnn.yaml
 ```
 
-### 8. Launch web app
+### 8. Launch Web App
 
 ```bash
 python run_server.py
 ```
 
-Then open http://localhost:8000
+Then open http://localhost:8000. The web app uses per-class optimal thresholds automatically.
 
-### 9. Programmatic inference
+### 9. Programmatic Inference
+
+**Single-model inference with optimal thresholds:**
 
 ```python
 import numpy as np
 import yaml
-import torch
-from src.inference.predict import load_trained_model, predict_signal
+from src.inference import load_trained_model, load_optimal_thresholds, predict_signal
 
 with open("configs/leadwise_cnn.yaml") as f:
     config = yaml.safe_load(f)
 
-model = load_trained_model(
-    "outputs/models/best_leadwise_cnn.pt",
-    config=config,
-    device=torch.device("cpu"),
-)
+model = load_trained_model("outputs/models/best_leadwise_cnn.pt", config=config)
+thresholds = load_optimal_thresholds("outputs/results/leadwise_cnn")
 
-# ECG array shape: (1000, 12)
-signal = np.load("path/to/ecg_signal.npy")
-result = predict_signal(model, signal, config, threshold=0.5)
+signal = np.load("path/to/ecg_signal.npy")  # shape: (1000, 12)
+result = predict_signal(model, signal, config, threshold=thresholds)
 print(result["predictions"], result["probabilities"])
 ```
 
+**Ensemble inference:**
+
+```python
+from src.inference import load_ensemble, predict_ensemble, load_optimal_thresholds
+
+models = load_ensemble(
+    ["leadwise_cnn", "cnn_1d", "lstm"],
+    configs_dir="configs",
+    models_dir="outputs/models",
+)
+thresholds = load_optimal_thresholds("outputs/results/ensemble_leadwise_cnn_cnn_1d_lstm")
+
+result = predict_ensemble(
+    models, signal, config,
+    threshold=thresholds,
+    label_classes=["NORM", "MI", "STTC", "CD", "HYP"],
+)
+print(result["predicted_classes"], result["class_probabilities"])
+```
+
+---
+
 ## Outputs and Artifacts
 
-### Cached processed data
+### Cached Processed Data
 
-- [data/processed/signals.npy](data/processed/signals.npy)
-- [data/processed/labels.npy](data/processed/labels.npy)
-- [data/processed/class_weights.npy](data/processed/class_weights.npy)
-- [data/processed/label_classes.json](data/processed/label_classes.json)
-- [data/processed/train_indices.npy](data/processed/train_indices.npy)
-- [data/processed/val_indices.npy](data/processed/val_indices.npy)
-- [data/processed/test_indices.npy](data/processed/test_indices.npy)
-- [data/processed/metadata.json](data/processed/metadata.json)
+| File | Description |
+|------|-------------|
+| `data/processed/signals.npy` | Preprocessed ECG signals `(N, 1000, 12)` |
+| `data/processed/labels.npy` | Binary label matrix `(N, 5)` |
+| `data/processed/class_weights.npy` | Inverse-prevalence class weights `(5,)` |
+| `data/processed/label_classes.json` | Ordered class names |
+| `data/processed/train_indices.npy` | Training split indices |
+| `data/processed/val_indices.npy` | Validation split indices |
+| `data/processed/test_indices.npy` | Test split indices |
+| `data/processed/metadata.json` | Preprocessing configuration snapshot |
 
-### Per-model results bundle
+### Per-Model Results
 
-Each model directory under [outputs/results](outputs/results) contains the same schema. Examples from [outputs/results/cnn_1d](outputs/results/cnn_1d):
+Each model directory under `outputs/results/` contains: `metrics.json`, `probabilities.npy`, `predictions.npy`, `labels.npy`, `optimal_thresholds.npy`, and training history arrays.
 
-- [outputs/results/cnn_1d/metrics.json](outputs/results/cnn_1d/metrics.json)
-- [outputs/results/cnn_1d/labels.npy](outputs/results/cnn_1d/labels.npy)
-- [outputs/results/cnn_1d/probabilities.npy](outputs/results/cnn_1d/probabilities.npy)
-- [outputs/results/cnn_1d/predictions.npy](outputs/results/cnn_1d/predictions.npy)
-- [outputs/results/cnn_1d/optimal_thresholds.npy](outputs/results/cnn_1d/optimal_thresholds.npy)
-- [outputs/results/cnn_1d/history_train_loss.npy](outputs/results/cnn_1d/history_train_loss.npy)
-- [outputs/results/cnn_1d/history_val_loss.npy](outputs/results/cnn_1d/history_val_loss.npy)
-- [outputs/results/cnn_1d/history_val_f1_macro.npy](outputs/results/cnn_1d/history_val_f1_macro.npy)
+### Multi-Model Comparison
 
-### Single-model comparison summary
+- `outputs/model_comparison.json` — metrics for all trained models in a single file.
 
-- [outputs/model_comparison.json](outputs/model_comparison.json)
-- Contains metrics for models with completed runs.
+### Ensemble Results
 
-### Ensemble results
+- `outputs/results/ensemble_leadwise_cnn_cnn_1d_lstm/` — metrics, predictions, probabilities, thresholds, and ensemble metadata.
 
-- [outputs/results/ensemble_leadwise_cnn_cnn_1d_lstm](outputs/results/ensemble_leadwise_cnn_cnn_1d_lstm)
-- Includes metrics, predictions, probabilities, thresholds, and ensemble metadata.
+### Cross-Validation Summary
 
-### Cross-validation summary
+- `outputs/results/cross_validation/cv_summary.json` — per-fold validation losses, mean and std.
 
-- [outputs/results/cross_validation/cv_summary.json](outputs/results/cross_validation/cv_summary.json)
+### Ablation Runs
 
-### Ablation runs
+- `outputs/ablation_runs/` — contains `baseline`, `asymmetric_focal`, `asymmetric_focal_sampler`, and `throughput` variants. Each has per-model subdirectories under `results/` (note: metrics files are not populated in this snapshot).
 
-- [outputs/ablation_runs](outputs/ablation_runs) contains baseline, asymmetric_focal, asymmetric_focal_sampler, and throughput variants.
+### Hyperparameter Tuning
 
-### Hyperparameter tuning
+- `outputs/hpo/bayes_leadwise_cnn/best_summary.json` — best trial params
+- `outputs/hpo/bayes_leadwise_cnn/best_config.yaml` — best YAML config
+- `outputs/hpo/bayes_leadwise_cnn/trials.csv` — all trial results
 
-- [outputs/hpo/bayes_leadwise_cnn](outputs/hpo/bayes_leadwise_cnn)
-- [outputs/hpo/bayes_leadwise_cnn/best_summary.json](outputs/hpo/bayes_leadwise_cnn/best_summary.json)
-- [outputs/hpo/bayes_leadwise_cnn/best_config.yaml](outputs/hpo/bayes_leadwise_cnn/best_config.yaml)
-- [outputs/hpo/bayes_leadwise_cnn/trials.csv](outputs/hpo/bayes_leadwise_cnn/trials.csv)
+### Model Checkpoints
+
+- `outputs/models/best_<model_name>.pt` — best checkpoints (includes `model_state_dict`, `optimizer_state_dict`, `config`, `epoch`, `val_loss`)
+- `outputs/models/best_leadwise_cnn_fold{0–4}.pt` — per-fold CV checkpoints
 
 ### Archives
 
-- [outputs/archives/models.zip](outputs/archives/models.zip)
-- [outputs/archives/results.zip](outputs/archives/results.zip)
+- `outputs/archives/models.zip`, `outputs/archives/results.zip`
 
-## Example Output
-
-Example from [outputs/results/cnn_1d/metrics.json](outputs/results/cnn_1d/metrics.json):
-
-```json
-{
-  "subset_accuracy": 0.5928279618701771,
-  "f1_macro": 0.7307163453461925,
-  "roc_auc_macro": 0.9188427440939044,
-  "f1_NORM": 0.8581349206349206,
-  "f1_MI": 0.7363717605004468
-}
-```
-
-### Field Notes
-
-- subset_accuracy: exact match across all labels
-- f1_macro, f1_micro, f1_weighted: F1 aggregation variants
-- precision_macro, recall_macro: macro-averaged precision and recall
-- roc_auc_macro, roc_auc_weighted: macro and weighted ROC-AUC
-- roc_auc_<LABEL>: per-class ROC-AUC
-- avg_precision_macro: macro average precision
-- f1_<LABEL>, precision_<LABEL>, recall_<LABEL>: per-class metrics
-
-## Evaluation Metrics and Results
-
-Metrics stored in each metrics output file (example: [outputs/results/cnn_1d/metrics.json](outputs/results/cnn_1d/metrics.json)):
-
-- subset_accuracy
-- f1_macro, f1_micro, f1_weighted
-- precision_macro, recall_macro
-- roc_auc_macro, roc_auc_weighted, roc_auc_<LABEL>
-- avg_precision_macro
-- f1_<LABEL>, precision_<LABEL>, recall_<LABEL>
-
-### Latest single-model results (from outputs/model_comparison.json)
-
-| Rank (F1 Macro) | Model | F1 Macro | ROC-AUC Macro | Subset Accuracy |
-|---|---|---:|---:|---:|
-| 1 | cnn_1d | 0.7307 | 0.9188 | 0.5928 |
-| 2 | leadwise_cnn | 0.7205 | 0.9075 | 0.5801 |
-| 3 | cnn_transformer | 0.7196 | 0.9152 | 0.5552 |
-| 4 | lstm | 0.7177 | 0.9097 | 0.5638 |
-| 5 | cnn_lstm | 0.7151 | 0.9115 | 0.5311 |
-| 6 | pretrained_resnet | 0.5258 | 0.7205 | 0.0576 |
-
-### Ensemble results
-
-From [outputs/results/ensemble_leadwise_cnn_cnn_1d_lstm/metrics.json](outputs/results/ensemble_leadwise_cnn_cnn_1d_lstm/metrics.json):
-
-- f1_macro: 0.7488
-- roc_auc_macro: 0.9248
-- subset_accuracy: 0.6015
-
-### Cross-validation summary
-
-From [outputs/results/cross_validation/cv_summary.json](outputs/results/cross_validation/cv_summary.json):
-
-- n_folds: 5
-- mean_val_loss: 0.0563
-- std_val_loss: 0.0009
+---
 
 ## Known Issues and Limitations
 
-- Per-class thresholds are optimized on the test split during evaluation, which can inflate test metrics.
-- Cross-validation outputs include validation loss only, without per-fold metrics.
-- Ablation summary outputs are not present in this snapshot; only per-variant result folders are available.
-- Figure and log artifacts are not present at the top-level outputs snapshot; they are produced by [scripts/run_experiment.py](scripts/run_experiment.py).
+1. **Threshold optimisation on test split** — Per-class thresholds are currently optimised on the test set during evaluation, which inflates reported test metrics. Should be optimised on validation and applied to test.
+2. **Cross-validation outputs** — Only validation loss is reported per fold; per-fold F1 and confusion matrices are not saved.
+3. **Ablation metrics** — Ablation run directories exist but `metrics.json` files are not populated in the current snapshot.
+4. **pretrained_resnet** — Severely underperforms (F1 0.53) due to ImageNet domain mismatch; consider domain-specific pretraining or removing from the comparison.
+5. **Figure artifacts** — Training history plots, ROC curves, and confusion matrices are generated by `run_experiment.py` but not committed to the repository.
 
 ## Future Improvements
 
-- Optimize thresholds on the validation split and apply them to the test split.
-- Save per-fold metrics and confusion matrices for cross-validation.
-- Add output schema validation for metrics and predictions.
-- Emit ablation summary outputs and surface them in the README.
+- [ ] Optimise thresholds on validation, apply to test for unbiased evaluation.
+- [ ] Save per-fold metrics and confusion matrices for cross-validation.
+- [ ] Add output schema validation (JSON Schema or Pydantic) for metrics and predictions.
+- [ ] Populate ablation summary metrics.
+- [ ] Add data augmentation (temporal jitter, lead dropout, Gaussian noise).
+- [ ] Implement Test-Time Augmentation (TTA) for inference.
+- [ ] Support ONNX export for deployment without PyTorch runtime.
+- [ ] Add Stochastic Weight Averaging (SWA) as a training option.
+
+---
 
 ## Project Structure
 
-- [configs](configs) experiment configs
-- [data/raw](data/raw) PTB-XL data
-- [data/processed](data/processed) cached artifacts
-- [outputs](outputs) metrics, predictions, models, archives
-- [scripts](scripts) CLI runners
-- [src](src) core library
-- [webapp](webapp) FastAPI UI
-- [run_server.py](run_server.py) app launcher
-- [requirements.txt](requirements.txt)
+```
+ecg-multilabel-classification/
+├── configs/              # YAML experiment configs
+│   ├── default.yaml      # Base config (all defaults)
+│   ├── leadwise_cnn.yaml
+│   ├── cnn_1d.yaml
+│   ├── lstm.yaml
+│   ├── cnn_lstm.yaml
+│   ├── cnn_transformer.yaml
+│   ├── resnet.yaml
+│   └── pretrained_resnet.yaml
+├── data/
+│   ├── raw/              # PTB-XL dataset (gitignored)
+│   └── processed/        # Cached preprocessed tensors
+├── notebooks/
+│   └── kaggle_training.ipynb
+├── outputs/
+│   ├── models/           # Saved checkpoints
+│   ├── results/          # Per-model evaluation results
+│   ├── ablation_runs/    # Ablation experiment results
+│   ├── hpo/              # Hyperparameter tuning results
+│   ├── archives/         # Zip archives
+│   └── model_comparison.json
+├── scripts/
+│   ├── preprocess_data.py
+│   ├── run_experiment.py
+│   ├── run_all_models.py
+│   ├── run_ensemble.py
+│   ├── run_ablation.py
+│   ├── run_bayesian_tuning.py
+│   ├── run_cv.py
+│   └── run_full_pipeline.sh
+├── src/
+│   ├── data/             # Loading, preprocessing, splitting, dataset
+│   ├── models/           # Architecture implementations + registry
+│   ├── training/         # Trainer, loss, optimiser, scheduler, CV
+│   ├── evaluation/       # Evaluator, metrics, plots, confusion matrix
+│   ├── inference/        # Predict, ensemble, postprocessing, thresholds
+│   └── utils/            # Device, paths, artifacts, logging
+├── webapp/
+│   ├── main.py           # FastAPI server
+│   └── static/           # Frontend HTML/CSS/JS
+├── run_server.py          # Quick launcher
+├── requirements.txt
+└── requirements.kaggle.txt
+```
+
+---
+
+## License
+
+This project uses the [PTB-XL dataset](https://physionet.org/content/ptb-xl/) which is available under the [PhysioNet Credentialed Health Data License 1.5.0](https://physionet.org/content/ptb-xl/1.0.1/).

@@ -3,6 +3,7 @@ ECG Diagnosis AI — FastAPI Web Server
 
 A web server for ECG multi-label classification using FastAPI.
 Uses the trained Leadwise CNN model to classify 12-lead ECG signals.
+Supports per-class optimal thresholds for improved prediction quality.
 
 Usage:
     uvicorn webapp.main:app --port 8000
@@ -127,6 +128,7 @@ _config = None
 _signals = None
 _labels = None
 _test_indices = None
+_optimal_thresholds = None
 
 
 def get_config() -> Dict[str, Any]:
@@ -145,32 +147,42 @@ def get_model():
         return _model
 
     logger.info("Loading model from %s ...", CHECKPOINT_PATH)
-    from src.models import build_model
+    from src.inference.predict import load_trained_model
 
     config = get_config()
     device = torch.device("cpu")
-    checkpoint = torch.load(
-        str(CHECKPOINT_PATH), map_location=device, weights_only=False
+    _model = load_trained_model(
+        str(CHECKPOINT_PATH), config=config, device=device
     )
-
-    model = build_model(config)
-
-    # Remap checkpoint keys: the model was trained with 'backbone'
-    # but the current code uses 'lead_backbone'
-    state_dict = checkpoint["model_state_dict"]
-    remapped = {}
-    for k, v in state_dict.items():
-        new_key = k.replace("backbone.", "lead_backbone.",
-                            1) if k.startswith("backbone.") else k
-        remapped[new_key] = v
-
-    model.load_state_dict(remapped)
-    model.to(device)
-    model.eval()
-
-    _model = model
     logger.info("✓ Model loaded successfully.")
     return _model
+
+
+def get_optimal_thresholds() -> np.ndarray:
+    """Load per-class optimal thresholds from saved results."""
+    global _optimal_thresholds
+    if _optimal_thresholds is not None:
+        return _optimal_thresholds
+
+    from src.inference.predict import load_optimal_thresholds
+
+    # Try ensemble thresholds first, then single-model
+    results_root = PROJECT_ROOT / "outputs" / "results"
+    ensemble_dir = results_root / "ensemble_leadwise_cnn_cnn_1d_lstm"
+    single_dir = results_root / "leadwise_cnn"
+
+    for candidate in [ensemble_dir, single_dir]:
+        thresh_path = candidate / "optimal_thresholds.npy"
+        if thresh_path.exists():
+            _optimal_thresholds = load_optimal_thresholds(
+                str(candidate), num_classes=len(LABEL_CLASSES)
+            )
+            logger.info("✓ Loaded optimal thresholds from %s", candidate.name)
+            return _optimal_thresholds
+
+    _optimal_thresholds = np.full(len(LABEL_CLASSES), 0.5, dtype=np.float32)
+    logger.info("Using default threshold=0.5 (no saved thresholds found)")
+    return _optimal_thresholds
 
 
 def get_sample_data():
@@ -189,29 +201,34 @@ def get_sample_data():
     return _signals, _labels, _test_indices
 
 
-@torch.no_grad()
+@torch.inference_mode()
 def run_inference(signal: np.ndarray) -> Dict[str, Any]:
-    """Run preprocessing + inference on a (1000, 12) ECG signal."""
-    from src.data.preprocessing import preprocess_pipeline
+    """Run preprocessing + inference on a (1000, 12) ECG signal.
+
+    Uses per-class optimal thresholds when available for improved accuracy.
+    """
+    from src.inference.predict import predict_signal
 
     model = get_model()
     config = get_config()
-    device = torch.device("cpu")
+    thresholds = get_optimal_thresholds()
 
-    batch = signal[np.newaxis, ...].astype(np.float32)
-    batch = preprocess_pipeline(batch, config)
+    result = predict_signal(
+        model, signal, config,
+        threshold=thresholds,
+        label_classes=LABEL_CLASSES,
+        device=torch.device("cpu"),
+    )
 
-    tensor = torch.tensor(batch, dtype=torch.float32).permute(
-        0, 2, 1).to(device)
-    logits = model(tensor)
-    probs = torch.sigmoid(logits).cpu().numpy()[0]
-    preds = (probs >= 0.5).astype(int)
+    probs = result["probabilities"]
+    preds = result["predictions"]
 
     classes = []
     for i, cls_name in enumerate(LABEL_CLASSES):
         info = LABEL_DESCRIPTIONS[cls_name]
         prob = float(probs[i])
         predicted = bool(preds[i])
+        t = float(thresholds[i]) if isinstance(thresholds, np.ndarray) else float(thresholds)
         confidence = "High" if prob >= 0.7 else "Medium" if prob >= 0.4 else "Low"
 
         classes.append({
@@ -223,6 +240,7 @@ def run_inference(signal: np.ndarray) -> Dict[str, Any]:
             "probability": round(prob, 4),
             "predicted": predicted,
             "confidence": confidence,
+            "threshold": round(t, 3),
         })
 
     predicted_classes = [c["full_name"] for c in classes if c["predicted"]]
@@ -286,9 +304,11 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 @app.on_event("startup")
 async def startup():
-    """Pre-load model and data on startup."""
+    """Pre-load model, thresholds, and data on startup."""
     logger.info("Pre-loading model...")
     get_model()
+    logger.info("Pre-loading optimal thresholds...")
+    get_optimal_thresholds()
     logger.info("Pre-loading sample data...")
     get_sample_data()
     logger.info("=" * 50)
