@@ -2,8 +2,8 @@
 ECG Diagnosis AI — FastAPI Web Server
 
 A web server for ECG multi-label classification using FastAPI.
-Uses the trained Leadwise CNN model to classify 12-lead ECG signals.
-Supports per-class optimal thresholds for improved prediction quality.
+Uses an ensemble of Leadwise CNN + CNN 1D + LSTM for inference.
+Falls back to any available single model if ensemble checkpoints are missing.
 
 Usage:
     uvicorn webapp.main:app --port 8000
@@ -21,7 +21,7 @@ import os
 import random
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 import numpy as np
 import torch
@@ -57,17 +57,22 @@ def _pick_path(env_var: str, candidates: List[Path]) -> Path:
     return candidates[0]
 
 
-CONFIG_PATH = _pick_path(
-    "ECG_CONFIG_PATH",
-    [PROJECT_ROOT / "configs" / "leadwise_cnn.yaml"],
-)
-CHECKPOINT_PATH = _pick_path(
-    "ECG_CHECKPOINT_PATH",
+# ── Ensemble configuration ─────────────────────────────────────
+ENSEMBLE_MODELS = ["leadwise_cnn", "cnn_1d", "lstm"]
+ENSEMBLE_WEIGHTS: Optional[List[float]] = None  # Equal weights; set e.g. [0.4, 0.35, 0.25] to customise
+
+CONFIGS_DIR = PROJECT_ROOT / "configs"
+MODELS_DIR = _pick_path(
+    "ECG_CHECKPOINT_PATH",  # still honour legacy env var
     [
-        PROJECT_ROOT / "outputs" / "models" / "best_leadwise_cnn.pt",
-        Path("/kaggle/working/outputs/models/best_leadwise_cnn.pt"),
+        PROJECT_ROOT / "outputs" / "models",
+        Path("/kaggle/working/outputs/models"),
     ],
 )
+# If the env var pointed at a file, use its parent directory
+if MODELS_DIR.is_file():
+    MODELS_DIR = MODELS_DIR.parent
+
 PROCESSED_DIR = _pick_path(
     "ECG_PROCESSED_DIR",
     [
@@ -123,8 +128,9 @@ ECG_LEAD_NAMES = ["I", "II", "III", "aVR", "aVL", "aVF",
                   "V1", "V2", "V3", "V4", "V5", "V6"]
 
 # ── Global model / data caches ─────────────────────────────────
-_model = None
-_config = None
+_ensemble_models: Optional[List] = None
+_ensemble_names: Optional[List[str]] = None
+_ensemble_config = None
 _signals = None
 _labels = None
 _test_indices = None
@@ -132,30 +138,67 @@ _optimal_thresholds = None
 
 
 def get_config() -> Dict[str, Any]:
-    global _config
-    if _config is None:
-        with open(CONFIG_PATH, "r") as f:
-            _config = yaml.safe_load(f)
-        _config = resolve_runtime_paths(
-            _config, project_root=PROJECT_ROOT, logger=logger)
-    return _config
+    """Load the first available ensemble model config for preprocessing."""
+    global _ensemble_config
+    if _ensemble_config is not None:
+        return _ensemble_config
+
+    # Use the first ensemble model's config as the canonical preprocessing config
+    for name in ENSEMBLE_MODELS:
+        cfg_path = CONFIGS_DIR / f"{name}.yaml"
+        if cfg_path.exists():
+            with open(cfg_path, "r") as f:
+                _ensemble_config = yaml.safe_load(f)
+            _ensemble_config = resolve_runtime_paths(
+                _ensemble_config, project_root=PROJECT_ROOT, logger=logger)
+            return _ensemble_config
+
+    raise FileNotFoundError(
+        f"No config found for any ensemble model {ENSEMBLE_MODELS} in {CONFIGS_DIR}"
+    )
 
 
-def get_model():
-    global _model
-    if _model is not None:
-        return _model
+def get_ensemble_models() -> List:
+    """Load ensemble models, falling back to any available single model."""
+    global _ensemble_models, _ensemble_names
+    if _ensemble_models is not None:
+        return _ensemble_models
 
-    logger.info("Loading model from %s ...", CHECKPOINT_PATH)
     from src.inference.predict import load_trained_model
 
-    config = get_config()
     device = torch.device("cpu")
-    _model = load_trained_model(
-        str(CHECKPOINT_PATH), config=config, device=device
+    loaded_models = []
+    loaded_names = []
+
+    for name in ENSEMBLE_MODELS:
+        cfg_path = CONFIGS_DIR / f"{name}.yaml"
+        ckpt_path = MODELS_DIR / f"best_{name}.pt"
+        if not cfg_path.exists() or not ckpt_path.exists():
+            logger.warning(
+                "Skipping %s — config=%s checkpoint=%s",
+                name, cfg_path.exists(), ckpt_path.exists(),
+            )
+            continue
+        with open(cfg_path) as f:
+            cfg = yaml.safe_load(f)
+        model = load_trained_model(str(ckpt_path), config=cfg, device=device)
+        loaded_models.append(model)
+        loaded_names.append(name)
+        logger.info("✓ Loaded %s", name)
+
+    if not loaded_models:
+        raise RuntimeError(
+            f"No checkpoints found for any ensemble model in {MODELS_DIR}. "
+            f"Expected: {', '.join(f'best_{n}.pt' for n in ENSEMBLE_MODELS)}"
+        )
+
+    _ensemble_models = loaded_models
+    _ensemble_names = loaded_names
+    logger.info(
+        "✓ Ensemble ready: %d model(s) — %s",
+        len(loaded_models), ", ".join(loaded_names),
     )
-    logger.info("✓ Model loaded successfully.")
-    return _model
+    return _ensemble_models
 
 
 def get_optimal_thresholds() -> np.ndarray:
@@ -203,18 +246,20 @@ def get_sample_data():
 
 @torch.inference_mode()
 def run_inference(signal: np.ndarray) -> Dict[str, Any]:
-    """Run preprocessing + inference on a (1000, 12) ECG signal.
+    """Run ensemble preprocessing + inference on a (1000, 12) ECG signal.
 
-    Uses per-class optimal thresholds when available for improved accuracy.
+    Averages sigmoid probabilities across all loaded models and applies
+    per-class optimal thresholds for improved accuracy.
     """
-    from src.inference.predict import predict_signal
+    from src.inference.predict import predict_ensemble
 
-    model = get_model()
+    models = get_ensemble_models()
     config = get_config()
     thresholds = get_optimal_thresholds()
 
-    result = predict_signal(
-        model, signal, config,
+    result = predict_ensemble(
+        models, signal, config,
+        weights=ENSEMBLE_WEIGHTS,
         threshold=thresholds,
         label_classes=LABEL_CLASSES,
         device=torch.device("cpu"),
@@ -248,6 +293,7 @@ def run_inference(signal: np.ndarray) -> Dict[str, Any]:
         "classes": classes,
         "predicted_classes": predicted_classes,
         "num_predicted": len(predicted_classes),
+        "ensemble_models": _ensemble_names or [],
     }
 
 
@@ -304,15 +350,15 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 @app.on_event("startup")
 async def startup():
-    """Pre-load model, thresholds, and data on startup."""
-    logger.info("Pre-loading model...")
-    get_model()
+    """Pre-load ensemble models, thresholds, and sample data on startup."""
+    logger.info("Pre-loading ensemble models...")
+    get_ensemble_models()
     logger.info("Pre-loading optimal thresholds...")
     get_optimal_thresholds()
     logger.info("Pre-loading sample data...")
     get_sample_data()
     logger.info("=" * 50)
-    logger.info("  🫀 ECG Diagnosis AI Server — Ready")
+    logger.info("  🫀 ECG Diagnosis AI Server — Ready (Ensemble Mode)")
     logger.info("=" * 50)
 
 
@@ -326,14 +372,20 @@ async def index():
 @app.get("/api/health")
 async def health():
     """Health check."""
-    return {"status": "ok", "model_loaded": _model is not None}
+    return {
+        "status": "ok",
+        "ensemble_loaded": _ensemble_models is not None,
+        "ensemble_size": len(_ensemble_models) if _ensemble_models else 0,
+        "ensemble_models": _ensemble_names or [],
+    }
 
 
 @app.get("/api/model-info")
 async def model_info():
     """Return model comparison metrics and architecture details."""
     result = {
-        "current_model": "Leadwise CNN",
+        "current_model": "Ensemble (" + " + ".join(_ensemble_names or ENSEMBLE_MODELS) + ")",
+        "ensemble_models": _ensemble_names or ENSEMBLE_MODELS,
         "label_classes": LABEL_CLASSES,
         "label_details": LABEL_DESCRIPTIONS,
         "lead_names": ECG_LEAD_NAMES,

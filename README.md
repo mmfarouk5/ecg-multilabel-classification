@@ -101,7 +101,8 @@ Raw ECG signal (seq_len, 12)
   → add batch dimension
   → preprocessing pipeline (same as training)
   → channel-first transpose (n_leads, seq_len)
-  → forward pass → sigmoid → probabilities
+  → forward pass through each ensemble model → sigmoid → probabilities
+  → weighted average of probabilities across models
   → apply per-class optimal thresholds
   → binary predictions + formatted output
 ```
@@ -111,7 +112,7 @@ Raw ECG signal (seq_len, 12)
 - **Per-class optimal thresholds** loaded from saved evaluation results (grid-search optimised on F1).
 - **Ensemble inference** (`predict_ensemble`) averages sigmoid probabilities across multiple models with configurable weights.
 - Uses `@torch.inference_mode()` for maximum inference performance.
-- The **web app** automatically loads the best available thresholds (ensemble first, then single-model fallback).
+- The **web app** runs a 3-model ensemble (leadwise_cnn + cnn_1d + lstm) by default, with automatic fallback to any available subset of models. It loads the best available per-class thresholds (ensemble first, then single-model fallback).
 
 ### Output Generation and Schema
 
@@ -287,8 +288,8 @@ Optional environment variable overrides:
 | Variable | Purpose |
 |----------|---------|
 | `PTBXL_DATA_DIR` | Dataset root directory |
-| `ECG_CONFIG_PATH` | Config YAML for the web app |
-| `ECG_CHECKPOINT_PATH` | Model checkpoint for the web app |
+| `ECG_CONFIG_PATH` | Config YAML (for non-ensemble use) |
+| `ECG_CHECKPOINT_PATH` | Model checkpoint directory for the web app |
 | `ECG_PROCESSED_DIR` | Preprocessed data directory |
 | `ECG_MODEL_COMPARISON_PATH` | Model comparison JSON |
 
@@ -348,7 +349,7 @@ python scripts/run_cv.py --config configs/leadwise_cnn.yaml
 python run_server.py
 ```
 
-Then open http://localhost:8000. The web app uses per-class optimal thresholds automatically.
+Then open http://localhost:8000. The web app loads a 3-model ensemble (leadwise_cnn + cnn_1d + lstm) with per-class optimal thresholds automatically.
 
 ### 9. Programmatic Inference
 
