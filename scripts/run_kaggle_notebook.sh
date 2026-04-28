@@ -20,7 +20,7 @@ MAX_SAMPLES=""
 FORCE_PREPROCESS=0
 
 usage() {
-  cat <<'EOF'
+  cat <<'__USAGE__'
 Run a Kaggle-friendly ECG notebook workflow.
 
 Usage:
@@ -31,7 +31,7 @@ Options:
   --max-samples N        Limit training to a subset for quicker debugging
   --force-preprocess     Rebuild cached full-dataset preprocessing artifacts
   -h, --help             Show this help
-EOF
+__USAGE__
 }
 
 while [[ $# -gt 0 ]]; do
