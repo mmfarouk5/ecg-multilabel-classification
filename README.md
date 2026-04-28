@@ -49,7 +49,6 @@ Edge handling:
 - `resnet`: 1D residual blocks with downsampling stages and global pooling.
 - `pretrained_resnet`: xresnet1d-style stem and residual stages, optional pretrained backbone loading and freezing.
 - `lstm`: bidirectional LSTM with temporal attention and FC head.
-- `transformer`: input projection to `d_model`, sinusoidal positional encoding, CLS token pooling, Transformer encoder.
 - `cnn_lstm`: CNN downsampling followed by a bidirectional LSTM, last hidden state to FC.
 - `cnn_transformer`: CNN downsampling, projection + positional encoding, CLS token pooling, Transformer encoder.
 
@@ -329,7 +328,6 @@ From [outputs/results/cross_validation/cv_summary.json](outputs/results/cross_va
 
 ## Known Issues and Limitations
 
-- Single-model outputs for `transformer` are not present in [outputs/model_comparison.json](outputs/model_comparison.json) even though the model is supported.
 - Per-class thresholds are optimized on the test split during evaluation, which can inflate test metrics.
 - Cross-validation outputs include validation loss only, without per-fold metrics.
 - Ablation summary outputs are not present in this snapshot; only per-variant result folders are available.
@@ -337,7 +335,6 @@ From [outputs/results/cross_validation/cv_summary.json](outputs/results/cross_va
 
 ## Future Improvements
 
-- Generate and include `transformer` results in the comparison summary.
 - Optimize thresholds on the validation split and apply them to the test split.
 - Save per-fold metrics and confusion matrices for cross-validation.
 - Add output schema validation for metrics and predictions.

@@ -14,7 +14,6 @@ from src.models.leadwise_cnn import LeadwiseCNN
 from src.models.resnet import ResNet1D
 from src.models.pretrained_resnet import PretrainedResNet1D
 from src.models.lstm import LSTMModel
-from src.models.transformer import TransformerModel
 from src.models.cnn_lstm import CNNLSTM
 from src.models.cnn_transformer import CNNTransformer
 
@@ -25,7 +24,6 @@ MODEL_REGISTRY: Dict[str, type] = {
     "resnet": ResNet1D,
     "pretrained_resnet": PretrainedResNet1D,
     "lstm": LSTMModel,
-    "transformer": TransformerModel,
     "cnn_lstm": CNNLSTM,
     "cnn_transformer": CNNTransformer,
 }
@@ -76,7 +74,6 @@ __all__ = [
     "ResNet1D",
     "PretrainedResNet1D",
     "LSTMModel",
-    "TransformerModel",
     "CNNLSTM",
     "CNNTransformer",
 ]
