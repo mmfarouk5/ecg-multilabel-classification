@@ -77,6 +77,30 @@ run_step() {
   "$@" 2>&1 | tee "${log_file}"
 }
 
+discover_kaggle_ptbxl_dir() {
+  if [[ ! -d "/kaggle/input" ]]; then
+    return 1
+  fi
+
+  while IFS= read -r csv_path; do
+    local candidate_dir
+    candidate_dir="$(dirname "${csv_path}")"
+    if [[ -f "${candidate_dir}/scp_statements.csv" ]]; then
+      printf '%s\n' "${candidate_dir}"
+      return 0
+    fi
+  done < <(find /kaggle/input -maxdepth 5 -type f -name 'ptbxl_database.csv' | sort)
+
+  return 1
+}
+
+if [[ -z "${PTBXL_DATA_DIR:-}" ]]; then
+  DISCOVERED_DATA_DIR="$(discover_kaggle_ptbxl_dir || true)"
+  if [[ -n "${DISCOVERED_DATA_DIR}" ]]; then
+    export PTBXL_DATA_DIR="${DISCOVERED_DATA_DIR}"
+  fi
+fi
+
 RUNTIME_INFO="$(
   CONFIG_PATH_ENV="${CONFIG_PATH}" "${PYTHON_BIN}" - <<'PY'
 import os
