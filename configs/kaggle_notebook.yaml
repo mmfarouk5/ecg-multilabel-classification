@@ -7,7 +7,7 @@
 # - disables optional extras that are not needed for a first run
 
 data:
-  raw_dir: "data/raw/ptb-xl-a-large-publicly-available-electrocardiography-dataset-1.0.1"
+  raw_dir: "/kaggle/input/datasets/khyeh0719/ptb-xl-dataset/ptb-xl-a-large-publicly-available-electrocardiography-dataset-1.0.1"
   processed_dir: "data/processed"
   sampling_rate: 100
   label_type: "diagnostic_superclass"

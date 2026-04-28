@@ -18,6 +18,7 @@ fi
 CONFIG_PATH="configs/kaggle_notebook.yaml"
 MAX_SAMPLES=""
 FORCE_PREPROCESS=0
+DEFAULT_KAGGLE_PTBXL_DIR="/kaggle/input/datasets/khyeh0719/ptb-xl-dataset/ptb-xl-a-large-publicly-available-electrocardiography-dataset-1.0.1"
 
 usage() {
   cat <<'__USAGE__'
@@ -94,6 +95,10 @@ discover_kaggle_ptbxl_dir() {
   return 1
 }
 
+if [[ -z "${PTBXL_DATA_DIR:-}" && -d "${DEFAULT_KAGGLE_PTBXL_DIR}" ]]; then
+  export PTBXL_DATA_DIR="${DEFAULT_KAGGLE_PTBXL_DIR}"
+fi
+
 if [[ -z "${PTBXL_DATA_DIR:-}" ]]; then
   DISCOVERED_DATA_DIR="$(discover_kaggle_ptbxl_dir || true)"
   if [[ -n "${DISCOVERED_DATA_DIR}" ]]; then
@@ -149,6 +154,9 @@ echo "Project root : ${PROJECT_ROOT}"
 echo "Python       : ${PYTHON_BIN}"
 echo "Config       : ${CONFIG_PATH}"
 echo "Dataset      : ${RAW_DIR}"
+if [[ -n "${PTBXL_DATA_DIR:-}" ]]; then
+  echo "PTBXL_DATA_DIR: ${PTBXL_DATA_DIR}"
+fi
 echo "Processed dir: ${PROCESSED_DIR}"
 echo "Logs         : ${LOG_DIR}"
 if [[ "${HAS_CUDA}" == "1" ]]; then
