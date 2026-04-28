@@ -18,6 +18,9 @@ fi
 CONFIG_PATH="configs/kaggle_notebook.yaml"
 MAX_SAMPLES=""
 FORCE_PREPROCESS=0
+WORKFLOW="full"
+HPO_TRIALS=30
+RUN_BEST_AFTER_HPO=0
 DEFAULT_KAGGLE_PTBXL_DIR="/kaggle/input/datasets/khyeh0719/ptb-xl-dataset/ptb-xl-a-large-publicly-available-electrocardiography-dataset-1.0.1"
 
 usage() {
@@ -29,7 +32,12 @@ Usage:
 
 Options:
   --config PATH          Config file to use (default: configs/kaggle_notebook.yaml)
+  --workflow MODE        'full' or 'single' (default: full)
+  --single-model         Shortcut for --workflow single
+  --full-pipeline        Shortcut for --workflow full
   --max-samples N        Limit training to a subset for quicker debugging
+  --hpo-trials N         Number of Optuna trials when workflow=full (default: 30)
+  --run-best-after-hpo   Run best HPO config after tuning when workflow=full
   --force-preprocess     Rebuild cached full-dataset preprocessing artifacts
   -h, --help             Show this help
 __USAGE__
@@ -41,9 +49,29 @@ while [[ $# -gt 0 ]]; do
       CONFIG_PATH="$2"
       shift 2
       ;;
+    --workflow)
+      WORKFLOW="$2"
+      shift 2
+      ;;
+    --single-model)
+      WORKFLOW="single"
+      shift
+      ;;
+    --full-pipeline)
+      WORKFLOW="full"
+      shift
+      ;;
     --max-samples)
       MAX_SAMPLES="$2"
       shift 2
+      ;;
+    --hpo-trials)
+      HPO_TRIALS="$2"
+      shift 2
+      ;;
+    --run-best-after-hpo)
+      RUN_BEST_AFTER_HPO=1
+      shift
       ;;
     --force-preprocess)
       FORCE_PREPROCESS=1
@@ -60,6 +88,12 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+if [[ "${WORKFLOW}" != "single" && "${WORKFLOW}" != "full" ]]; then
+  echo "Unsupported workflow: ${WORKFLOW}" >&2
+  echo "Use --workflow single or --workflow full." >&2
+  exit 1
+fi
 
 TIMESTAMP="$(date +%Y%m%d_%H%M%S)"
 LOG_DIR="outputs/kaggle_logs/${TIMESTAMP}"
@@ -146,13 +180,18 @@ PY
 )"
 
 if [[ "${HAS_CUDA}" != "1" && -z "${MAX_SAMPLES}" ]]; then
-  MAX_SAMPLES="4000"
-  echo "CUDA was not detected. Falling back to a quicker CPU-sized run with --max-samples ${MAX_SAMPLES}."
+  if [[ "${WORKFLOW}" == "single" ]]; then
+    MAX_SAMPLES="4000"
+    echo "CUDA was not detected. Falling back to a quicker CPU-sized run with --max-samples ${MAX_SAMPLES}."
+  else
+    echo "CUDA was not detected. Full pipeline will run on CPU and may take a very long time." >&2
+  fi
 fi
 
 echo "Project root : ${PROJECT_ROOT}"
 echo "Python       : ${PYTHON_BIN}"
 echo "Config       : ${CONFIG_PATH}"
+echo "Workflow     : ${WORKFLOW}"
 echo "Dataset      : ${RAW_DIR}"
 if [[ -n "${PTBXL_DATA_DIR:-}" ]]; then
   echo "PTBXL_DATA_DIR: ${PTBXL_DATA_DIR}"
@@ -170,43 +209,69 @@ if [[ -n "${MAX_SAMPLES}" ]]; then
   MAX_SAMPLES_ARGS=(--max-samples "${MAX_SAMPLES}")
 fi
 
-if [[ -z "${MAX_SAMPLES}" ]]; then
-  CACHE_VALID=1
-  for required in \
-    signals.npy \
-    labels.npy \
-    class_weights.npy \
-    label_classes.json \
-    metadata.json \
-    train_indices.npy \
-    val_indices.npy \
-    test_indices.npy; do
-    if [[ ! -f "${PROCESSED_DIR}/${required}" ]]; then
-      CACHE_VALID=0
-      break
-    fi
-  done
+if [[ "${WORKFLOW}" == "single" ]]; then
+  if [[ -z "${MAX_SAMPLES}" ]]; then
+    CACHE_VALID=1
+    for required in \
+      signals.npy \
+      labels.npy \
+      class_weights.npy \
+      label_classes.json \
+      metadata.json \
+      train_indices.npy \
+      val_indices.npy \
+      test_indices.npy; do
+      if [[ ! -f "${PROCESSED_DIR}/${required}" ]]; then
+        CACHE_VALID=0
+        break
+      fi
+    done
 
-  if [[ ${FORCE_PREPROCESS} -eq 1 || ${CACHE_VALID} -eq 0 ]]; then
-    run_step "01_preprocess" \
-      "${PYTHON_BIN}" scripts/preprocess_data.py --config "${CONFIG_PATH}"
+    if [[ ${FORCE_PREPROCESS} -eq 1 || ${CACHE_VALID} -eq 0 ]]; then
+      run_step "01_preprocess" \
+        "${PYTHON_BIN}" scripts/preprocess_data.py --config "${CONFIG_PATH}"
+    else
+      echo
+      echo "============================================================"
+      echo "STEP: 01_preprocess"
+      echo "Using existing cached preprocessing artifacts in ${PROCESSED_DIR}"
+      echo "============================================================"
+    fi
   else
     echo
     echo "============================================================"
     echo "STEP: 01_preprocess"
-    echo "Using existing cached preprocessing artifacts in ${PROCESSED_DIR}"
+    echo "Skipping full-dataset preprocessing because a subset run was requested."
     echo "============================================================"
   fi
 else
   echo
   echo "============================================================"
   echo "STEP: 01_preprocess"
-  echo "Skipping full-dataset preprocessing because a subset run was requested."
+  echo "Full pipeline will manage preprocessing and reuse cache when available."
   echo "============================================================"
 fi
 
-run_step "02_train_single_model" \
-  "${PYTHON_BIN}" scripts/run_experiment.py --config "${CONFIG_PATH}" "${MAX_SAMPLES_ARGS[@]}"
+if [[ "${WORKFLOW}" == "single" ]]; then
+  run_step "02_train_single_model" \
+    "${PYTHON_BIN}" scripts/run_experiment.py --config "${CONFIG_PATH}" "${MAX_SAMPLES_ARGS[@]}"
+else
+  FULL_PIPELINE_ARGS=(
+    bash scripts/run_full_pipeline.sh
+    --hpo-trials "${HPO_TRIALS}"
+  )
+  if [[ ${FORCE_PREPROCESS} -eq 1 ]]; then
+    FULL_PIPELINE_ARGS+=(--force-preprocess)
+  fi
+  if [[ ${RUN_BEST_AFTER_HPO} -eq 1 ]]; then
+    FULL_PIPELINE_ARGS+=(--run-best-after-hpo)
+  fi
+  if [[ -n "${MAX_SAMPLES}" ]]; then
+    FULL_PIPELINE_ARGS+=(--max-samples "${MAX_SAMPLES}")
+  fi
+
+  run_step "02_full_pipeline" "${FULL_PIPELINE_ARGS[@]}"
+fi
 
 echo
 echo "Notebook run complete."
@@ -214,5 +279,6 @@ echo "Main outputs:"
 echo "  ${MODELS_DIR}"
 echo "  ${RESULTS_DIR}"
 echo "  ${FIGURES_DIR}"
+echo "  /kaggle/working/outputs/archives"
 echo "Logs:"
 echo "  ${PROJECT_ROOT}/${LOG_DIR}"
