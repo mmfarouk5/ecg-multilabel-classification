@@ -1,0 +1,22 @@
+{
+  "study_name": "bayes_leadwise_cnn",
+  "best_trial_number": 14,
+  "best_value": 0.7483128008744376,
+  "best_params": {
+    "learning_rate": 0.00010872815206651603,
+    "weight_decay": 0.002557614322792314,
+    "batch_size": 32,
+    "optimizer": "adamw",
+    "gradient_clip": 1.8695078549664712,
+    "scheduler": "plateau",
+    "class_aware_sampling": true,
+    "plateau_patience": 6,
+    "plateau_factor": 0.4700705765280857,
+    "plateau_min_lr": 1.1858722078757641e-06,
+    "gamma_pos": 1.8490163928973629,
+    "gamma_neg": 2.89672068922683,
+    "clip": 0.07196038132966723,
+    "dropout": 0.4391832455069998
+  },
+  "best_config_path": "/kaggle/working/outputs/hpo/bayes_leadwise_cnn/best_config.yaml"
+}

@@ -1,0 +1,70 @@
+data:
+  raw_dir: /kaggle/input/datasets/khyeh0719/ptb-xl-dataset/ptb-xl-a-large-publicly-available-electrocardiography-dataset-1.0.1
+  processed_dir: /kaggle/working/data/processed
+  sampling_rate: 100
+  label_type: diagnostic_superclass
+preprocessing:
+  bandpass:
+    lowcut: 0.5
+    highcut: 40.0
+    order: 4
+  baseline_wander:
+    cutoff: 0.5
+    order: 4
+  outlier_clip_percentile: 99
+  normalize: true
+split:
+  val_fold: 9
+  test_fold: 10
+  n_kfolds: 5
+  seed: 42
+model:
+  name: leadwise_cnn
+  input_channels: 12
+  num_classes: 5
+  params:
+    base_filters: 32
+    n_blocks: 3
+    kernel_size: 7
+    dropout: 0.4391832455069998
+training:
+  epochs: 60
+  batch_size: 32
+  learning_rate: 0.00010872815206651603
+  weight_decay: 0.002557614322792314
+  loss: asymmetric_focal
+  optimizer: adamw
+  scheduler: plateau
+  scheduler_params:
+    patience: 6
+    factor: 0.4700705765280857
+    min_lr: 1.1858722078757641e-06
+  asymmetric_focal_loss_params:
+    gamma_pos: 1.8490163928973629
+    gamma_neg: 2.89672068922683
+    clip: 0.07196038132966723
+  amp: true
+  gradient_clip: 1.8695078549664712
+  num_workers: 4
+  pin_memory: true
+  early_stopping:
+    enabled: true
+    monitor: val_f1_macro
+    patience: 10
+    min_delta: 0.0001
+    mode: max
+    restore_best_weights: true
+  class_aware_sampling:
+    enabled: true
+output:
+  dir: /kaggle/working/outputs/hpo/bayes_leadwise_cnn/trials/trial_0014
+  figures_dir: /kaggle/working/outputs/hpo/bayes_leadwise_cnn/trials/trial_0014/figures
+  logs_dir: /kaggle/working/outputs/hpo/bayes_leadwise_cnn/trials/trial_0014/logs
+  models_dir: /kaggle/working/outputs/hpo/bayes_leadwise_cnn/trials/trial_0014/models
+  results_dir: /kaggle/working/outputs/hpo/bayes_leadwise_cnn/trials/trial_0014/results
+experiment:
+  name: bayes_trial_14
+  seed: 42
+  use_tensorboard: false
+  use_wandb: false
+  deterministic: true
